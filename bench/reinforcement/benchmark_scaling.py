@@ -68,9 +68,8 @@ def measure_train_fps(algo, target_timesteps: int = 8192) -> float:
     """Wall-clock train FPS for a fixed number of env timesteps (fair across n_envs)."""
     if algo._last_obs is None:
         algo._last_obs, _ = algo.env.reset()
-    start_timesteps = algo.num_timesteps
-    start = time.time()
-    while algo.num_timesteps - start_timesteps < target_timesteps:
+
+    def cycle():
         if hasattr(algo, "collect_rollouts"):
             algo.collect_rollouts()
             algo.train()
@@ -87,15 +86,34 @@ def measure_train_fps(algo, target_timesteps: int = 8192) -> float:
                 else:
                     terminated = dones
                     truncated = mx.zeros((algo.n_envs,))
-                
+
                 if isinstance(infos, dict) and "timeouts" in infos:
                     timeouts = infos["timeouts"]
                     truncated = mx.maximum(truncated, timeouts)
-                
+
                 algo.replay.add(obs, new_obs, action, rewards, terminated.astype(mx.float32), truncated.astype(mx.float32))
                 algo._last_obs = new_obs
             if algo.num_timesteps >= algo.learning_starts:
                 algo.train(algo.gradient_steps, algo.batch_size)
+
+    cycle()  # warm up compiled paths so compile time is not counted
+    start_timesteps = algo.num_timesteps
+    start = time.time()
+    while algo.num_timesteps - start_timesteps < target_timesteps:
+        cycle()
+    # Flush the lazy graph so wall time reflects actual compute, not graph build.
+    if hasattr(algo, "collect_rollouts"):
+        mx.eval(algo.policy.state, algo.optimizer.state)
+    else:
+        mx.eval(
+            algo.actor.state,
+            algo.critic.state,
+            algo.critic_target.state,
+            algo.actor_opt.state,
+            algo.critic_opt.state,
+        )
+        if getattr(algo, "alpha_mod", None) is not None:
+            mx.eval(algo.alpha_mod.state, algo.ent_opt.state)
     elapsed = max(time.time() - start, 1e-9)
     total_steps = algo.num_timesteps - start_timesteps
     return total_steps / elapsed
