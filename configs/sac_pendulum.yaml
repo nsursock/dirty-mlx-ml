@@ -1,0 +1,23 @@
+algo: sac
+env_id: Pendulum-v1
+num_envs: 8
+seed: 0
+total_timesteps: 60000
+log_interval: 50
+
+policy: MlpPolicy
+learning_rate: 0.0003
+buffer_size: 200000
+learning_starts: 1000
+batch_size: 256
+tau: 0.005
+gamma: 0.99
+train_freq: 1
+gradient_steps: 1
+ent_coef: auto
+target_update_interval: 1
+target_entropy: auto
+stats_window_size: 100
+
+policy_kwargs:
+  net_arch: [256, 256]
