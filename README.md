@@ -118,7 +118,7 @@ pytest tests/ -q -m slow
 
 ## Benchmarks
 
-Performance on Apple Silicon (M-series). Run with `python bench/benchmark.py` and `python bench/benchmark_solve.py`.
+Performance on Apple Silicon (M-series). Run with `python bench/reinforcement/benchmark_scaling.py` and `python bench/reinforcement/benchmark_solve.py`.
 
 ### Scaling Performance
 
