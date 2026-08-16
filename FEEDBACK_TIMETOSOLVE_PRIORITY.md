@@ -23,12 +23,23 @@ Issues from AI feedback on making bench solve time **fast**, organized by priori
 | CartPole-v1 | PPO | ~9.5–11s / ~32k | **< 0.8–1.5s** | ~8–20k | Gemini/DeepSeek |
 | Pendulum-v1 | SAC | ~45–50s / ~65k | **< 3–5s** | ~12–15k | Gemini/DeepSeek |
 
+## Status
+
+| Priority | Status |
+|----------|--------|
+| **P0** SAC sync / redundant forwards / compile | **Done** (`c9a2588`) |
+| **P0** PPO compile minibatch | **Done** (`c9a2588`) |
+| **P1** Eval/logging wall tax | **Done** — vectorized probe eval, probe+confirm stop |
+| **P1** Sample budget / early-stop | **Done** — stop on first confirmed competence |
+| **P1** TTS multi-seed protocol | **Done** — median TTS/STS, success rate, optional `--warm` |
+
 ## Summary
 
-- **P0 (Critical path)**: 3 issues — SAC syncs, redundant forwards, `mx.compile` on update
-- **P1 (High)**: 3 issues — eval overhead, sample budget/early-stop, TTS protocol
+- **P0 (Critical path)**: 3 issues — SAC syncs, redundant forwards, `mx.compile` on update (**done**)
+- **P1 (High)**: 3 issues — eval overhead, sample budget/early-stop, TTS protocol (**done**)
 - **P2 (Medium)**: 3 issues — HP tune, online tracking, README hierarchy
 - **P3 (Low)**: 2 issues — external baselines, log cadence
+
 
 ## Recommended attack order
 

@@ -59,12 +59,12 @@ def test_ppo_solves_cartpole():
 @pytest.mark.slow
 def test_sac_solves_pendulum():
     os.makedirs(LOG_DIR, exist_ok=True)
-    env = make("Pendulum-v1", num_envs=8, seed=0)
+    env = make("Pendulum-v1", num_envs=16, seed=0)
     model = SAC(
         "MlpPolicy",
         env,
-        learning_starts=1000,
-        buffer_size=100_000,
+        learning_starts=500,
+        buffer_size=50_000,
         batch_size=256,
         train_freq=1,
         gradient_steps=1,
@@ -73,9 +73,9 @@ def test_sac_solves_pendulum():
         policy_kwargs={"net_arch": [256, 256]},
     )
     t0 = time.time()
-    model.learn(total_timesteps=100_000, log_interval=200)
+    model.learn(total_timesteps=130_000, log_interval=200)
     elapsed = time.time() - t0
-    fps = 100_000 / max(elapsed, 1e-9)
+    fps = 130_000 / max(elapsed, 1e-9)
     mean = _eval_mean(model, "Pendulum-v1", n_eps=10, max_steps=200)
     assert mean >= -200.0, f"Pendulum not solved: mean={mean:.1f} fps={fps:.0f}"
-    assert fps > 500, f"too slow: fps={fps:.0f}"
+    assert fps > 1500, f"too slow: fps={fps:.0f}"
