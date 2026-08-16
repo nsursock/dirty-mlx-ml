@@ -193,21 +193,21 @@ Train until threshold; stop on first **probe + confirm**. Median ± std over see
 
 Protocol: vectorized probe every few thousand steps → one confirmation eval → stop. Thresholds: CartPole **475.0** (Gym official), Pendulum **-200.0**.
 
-**PPO on CartPole-v1** (3 seeds, warm):
+**PPO on CartPole-v1** (5 seeds, warm):
 
 | n_envs | Success | STS (samples)   | TTS (s)       | Eval        | Train FPS     |
 |-------:|--------:|----------------:|--------------:|------------:|--------------:|
-| 8      | 100%    | 12,288 ± 2,365  | **1.36 ± 0.21** | 499.2 ± 8.5 | 9,577 ± 384   |
-| 16     | 100%    | 24,576 ± 4,730  | **1.76 ± 0.31** | 500.0 ± 2.0 | 14,077 ± 153  |
+| 8      | 100%    | 16,384 ± 4,670  | **0.89 ± 0.27** | 494.8 ± 8.0 | 18,138 ± 314  |
+| 16     | 100%    | 28,672 ± 10,199 | **1.04 ± 0.36** | 495.0 ± 7.6 | 27,317 ± 570  |
 
 **SAC on Pendulum-v1** (5 seeds, warm; `lr=2e-3`, `tau=0.02`, `learning_starts=256`):
 
-| n_envs | Success | STS (samples) | TTS (s)        | Eval   |
-|-------:|--------:|--------------:|---------------:|-------:|
-| 8      | 100%    | ~16k median   | **~6.9**       | ≥ −200 |
-| 16     | 100%    | ~20k median   | **~4.2**       | ≥ −200 |
+| n_envs | Success | STS (samples)    | TTS (s)         | Eval   |
+|-------:|--------:|-----------------:|----------------:|-------:|
+| 8      | 100%    | 12,288 ± 10,443  | **2.01 ± 1.83** | ≥ −200 |
+| 16     | 100%    | 20,480 ± 6,212   | **1.78 ± 0.55** | ≥ −200 |
 
-STS = samples-to-solve, TTS = wall time-to-solve. Faster target-network Polyak + higher LR cut Pendulum TTS from ~26–44s to ~4–7s.
+STS = samples-to-solve, TTS = wall time-to-solve. Compiling the rollout loop (single `mx.compile` unrolled graph) plus RNG key-threading roughly doubled train FPS — Pendulum TTS ~4–7s → ~2s, CartPole ~1.4–1.8s → ~0.9–1.0s.
 
 ### Cross-framework baselines
 
