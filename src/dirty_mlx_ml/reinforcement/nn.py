@@ -141,7 +141,12 @@ class SACActor(nn.Module):
         else:
             z = mu + std * mx.random.normal(mu.shape)
         action = mx.tanh(z)
-        log_prob = _gauss_log_prob(z, mu, log_std) - mx.sum(mx.log(1.0 - action**2 + 1e-6), axis=-1)
+        # Use numerically stable form for tanh squash log-prob to avoid singularity at action = ±1
+        # Stable form: 2*(log(2) - z - softplus(-2z)) instead of log(1 - action^2)
+        # Use numerically stable softplus: softplus(x) = log(1 + exp(x))
+        x = -2.0 * z
+        softplus_x = mx.where(x > 0, x + mx.log1p(mx.exp(-x)), mx.log1p(mx.exp(x)))
+        log_prob = _gauss_log_prob(z, mu, log_std) - mx.sum(2 * (math.log(2.0) - z - softplus_x), axis=-1)
         return action, log_prob
 
 
