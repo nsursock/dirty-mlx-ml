@@ -97,20 +97,20 @@ class ReplayBuffer:
         self.next_obs = mx.zeros((s, e, obs_dim))
         self.actions = mx.zeros((s, e, act_dim))
         self.rewards = mx.zeros((s, e))
-        self.dones = mx.zeros((s, e))
-        self.timeouts = mx.zeros((s, e))
+        self.terminated = mx.zeros((s, e))
+        self.truncated = mx.zeros((s, e))
         self.pos = 0
         self.full = False
 
-    def add(self, obs, next_obs, actions, rewards, dones, timeouts=None):
+    def add(self, obs, next_obs, actions, rewards, terminated, truncated=None):
         p = self.pos
         self.obs[p] = obs
         self.next_obs[p] = next_obs
         self.actions[p] = actions
         self.rewards[p] = rewards
-        self.dones[p] = dones
-        if timeouts is not None:
-            self.timeouts[p] = timeouts
+        self.terminated[p] = terminated
+        if truncated is not None:
+            self.truncated[p] = truncated
         self.pos = p + 1
         if self.pos == self.buffer_size:
             self.full = True
@@ -123,11 +123,11 @@ class ReplayBuffer:
         upper = self.buffer_size if self.full else max(self.pos, 1)
         bi = mx.random.randint(0, upper, (batch_size,))
         ei = mx.random.randint(0, self.n_envs, (batch_size,))
-        dones = self.dones[bi, ei] * (1.0 - self.timeouts[bi, ei])
         return {
             "obs": self.obs[bi, ei],
             "next_obs": self.next_obs[bi, ei],
             "actions": self.actions[bi, ei],
             "rewards": self.rewards[bi, ei].reshape(-1, 1),
-            "dones": dones.reshape(-1, 1),
+            "terminated": self.terminated[bi, ei].reshape(-1, 1),
+            "truncated": self.truncated[bi, ei].reshape(-1, 1),
         }

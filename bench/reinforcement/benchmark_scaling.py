@@ -67,12 +67,18 @@ def measure_train_fps(algo, target_timesteps: int = 8192) -> float:
                 new_obs, rewards, dones, infos = algo.env.step(action)
                 algo.num_timesteps += algo.n_envs
                 algo._update_ep_stats(rewards, dones)
-                timeouts = (
-                    infos.get("timeouts", mx.zeros((algo.n_envs,)))
-                    if isinstance(infos, dict)
-                    else mx.zeros((algo.n_envs,))
-                )
-                algo.replay.add(obs, new_obs, action, rewards, dones.astype(mx.float32), timeouts)
+                # Handle terminated vs truncated
+                if isinstance(dones, tuple) and len(dones) == 2:
+                    terminated, truncated = dones
+                else:
+                    terminated = dones
+                    truncated = mx.zeros((algo.n_envs,))
+                
+                if isinstance(infos, dict) and "timeouts" in infos:
+                    timeouts = infos["timeouts"]
+                    truncated = mx.maximum(truncated, timeouts)
+                
+                algo.replay.add(obs, new_obs, action, rewards, terminated.astype(mx.float32), truncated.astype(mx.float32))
                 algo._last_obs = new_obs
             if algo.num_timesteps >= algo.learning_starts:
                 algo.train(algo.gradient_steps, algo.batch_size)

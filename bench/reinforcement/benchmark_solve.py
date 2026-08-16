@@ -116,12 +116,19 @@ def train_until_solved(
                 new_obs, rewards, dones, infos = model.env.step(action)
                 model.num_timesteps += model.n_envs
                 model._update_ep_stats(rewards, dones)
-                timeouts = (
-                    infos.get("timeouts", mx.zeros((model.n_envs,)))
-                    if isinstance(infos, dict)
-                    else mx.zeros((model.n_envs,))
-                )
-                model.replay.add(obs, new_obs, action, rewards, dones.astype(mx.float32), timeouts)
+                
+                # Handle terminated vs truncated
+                if isinstance(dones, tuple) and len(dones) == 2:
+                    terminated, truncated = dones
+                else:
+                    terminated = dones
+                    truncated = mx.zeros((model.n_envs,))
+                
+                if isinstance(infos, dict) and "timeouts" in infos:
+                    timeouts = infos["timeouts"]
+                    truncated = mx.maximum(truncated, timeouts)
+                
+                model.replay.add(obs, new_obs, action, rewards, terminated.astype(mx.float32), truncated.astype(mx.float32))
                 model._last_obs = new_obs
             if model.num_timesteps >= model.learning_starts:
                 gs = model.gradient_steps if model.gradient_steps > 0 else model.train_freq

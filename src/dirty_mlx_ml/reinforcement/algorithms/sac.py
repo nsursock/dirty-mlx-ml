@@ -113,7 +113,15 @@ class SAC:
     def _update_ep_stats(self, rewards, dones):
         self._ep_rew = self._ep_rew + rewards
         self._ep_len = self._ep_len + 1.0
-        d = dones.astype(mx.float32)
+        
+        # Handle both tuple (terminated, truncated) and single done signal
+        if isinstance(dones, tuple) and len(dones) == 2:
+            terminated, truncated = dones
+            d = mx.maximum(terminated, truncated)  # Episode ends on either
+        else:
+            d = dones
+        
+        d = d.astype(mx.float32)
         finished = d > 0.5
         self._roll_rew_sum = self._roll_rew_sum + mx.sum(mx.where(finished, self._ep_rew, 0.0))
         self._roll_len_sum = self._roll_len_sum + mx.sum(mx.where(finished, self._ep_len, 0.0))
@@ -167,7 +175,15 @@ class SAC:
             next_log_prob = mx.stop_gradient(next_log_prob)
             nq1, nq2 = self.critic_target(batch["next_obs"], next_actions)
             next_q = mx.minimum(nq1, nq2) - ent_coef * next_log_prob
-            target_q = batch["rewards"].reshape(-1) + (1.0 - batch["dones"].reshape(-1)) * gamma * next_q
+            
+            # Proper handling of terminated vs truncated states
+            # terminated: natural episode end, no bootstrapping (target = reward)
+            # truncated: timeout, should bootstrap (target = reward + gamma * next_q)
+            terminated = batch["terminated"].reshape(-1)
+            truncated = batch["truncated"].reshape(-1)
+            # Bootstrap only when not terminated (i.e., continue or truncated)
+            should_bootstrap = 1.0 - terminated
+            target_q = batch["rewards"].reshape(-1) + should_bootstrap * gamma * next_q
             target_q = mx.stop_gradient(target_q)
 
             def critic_loss_fn(model):
@@ -265,10 +281,24 @@ class SAC:
                 new_obs, rewards, dones, infos = self.env.step(action)
                 self.num_timesteps += self.n_envs
                 self._update_ep_stats(rewards, dones)
-                timeouts = infos.get("timeouts", mx.zeros((self.n_envs,))) if isinstance(infos, dict) else mx.zeros(
-                    (self.n_envs,)
-                )
-                self.replay.add(obs, new_obs, action, rewards, dones.astype(mx.float32), timeouts)
+                
+                # Properly handle terminated vs truncated
+                # In Gymnasium, dones is a tuple (terminated, truncated) in newer versions
+                # For compatibility, we need to extract both if available
+                if isinstance(dones, tuple) and len(dones) == 2:
+                    terminated, truncated = dones
+                else:
+                    # Legacy behavior: assume single done signal, treat as terminated
+                    terminated = dones
+                    truncated = mx.zeros((self.n_envs,))
+                
+                # Extract timeouts from infos if available (Gymnasium style)
+                if isinstance(infos, dict) and "timeouts" in infos:
+                    timeouts = infos["timeouts"]
+                    # In Gymnasium, timeouts are already part of truncated, but we keep for compatibility
+                    truncated = mx.maximum(truncated, timeouts)
+                
+                self.replay.add(obs, new_obs, action, rewards, terminated.astype(mx.float32), truncated.astype(mx.float32))
                 self._last_obs = new_obs
 
             if self.num_timesteps >= self.learning_starts:
