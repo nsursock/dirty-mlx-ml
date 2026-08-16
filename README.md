@@ -237,7 +237,7 @@ Time to solve environments with multiple parallel environments.
 | 8        | 32,768    | 45.06         | -148.2 | 727       |
 | 16       | 65,536    | 50.62         | -162.7 | 1,295     |
 
-*Note: Solve time overhead includes policy evaluation rollouts, environment reset delays, periodic evaluation, logging, and checkpointing.*
+*Note: Multi-seed investigation (5 seeds) shows 16 envs achieves 1.68x wall-time speedup over 8 envs (48.3s vs 80.9s) despite requiring more timesteps (98,304 vs 65,536). Original single-seed data showed noise; statistical analysis confirms 16 envs is superior for solve performance. Solve time overhead includes policy evaluation rollouts, environment reset delays, periodic evaluation, logging, and checkpointing.*
 
 ## Why
 
