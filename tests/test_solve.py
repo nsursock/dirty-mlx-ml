@@ -63,19 +63,21 @@ def test_sac_solves_pendulum():
     model = SAC(
         "MlpPolicy",
         env,
-        learning_starts=500,
+        learning_starts=256,
         buffer_size=50_000,
         batch_size=256,
         train_freq=1,
         gradient_steps=1,
+        learning_rate=2e-3,
+        tau=0.02,
         seed=0,
         log_dir=os.path.join(LOG_DIR, "sac"),
         policy_kwargs={"net_arch": [256, 256]},
     )
     t0 = time.time()
-    model.learn(total_timesteps=130_000, log_interval=200)
+    model.learn(total_timesteps=50_000, log_interval=200)
     elapsed = time.time() - t0
-    fps = 130_000 / max(elapsed, 1e-9)
+    fps = 50_000 / max(elapsed, 1e-9)
     mean = _eval_mean(model, "Pendulum-v1", n_eps=10, max_steps=200)
     assert mean >= -200.0, f"Pendulum not solved: mean={mean:.1f} fps={fps:.0f}"
-    assert fps > 1500, f"too slow: fps={fps:.0f}"
+    assert fps > 2000, f"too slow: fps={fps:.0f}"

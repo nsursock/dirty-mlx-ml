@@ -174,71 +174,64 @@ pytest tests/ -q -m slow
 
 ## Benchmarks
 
-Performance on Apple Silicon (M-series). Run with `python bench/reinforcement/benchmark_scaling.py` and `python bench/reinforcement/benchmark_solve.py`.
+Primary metric is **time-to-competence (TTS)**: wall-clock until a competent policy, not raw env FPS.
 
-### Hardware Context
+```bash
+python bench/reinforcement/benchmark_solve.py --warm --seeds 5
+python bench/reinforcement/benchmark_scaling.py   # systems microbench (secondary)
+python bench/reinforcement/detect_hardware.py
+```
 
-Benchmark results below were obtained on: **Apple M3, 16 GB unified memory**.
+### Hardware
 
-Performance may vary significantly across different Apple Silicon configurations:
-- **Chip variants**: M1, M1 Pro/Max/Ultra, M2, M2 Pro/Max/Ultra, M3, M3 Pro/Max/Ultra
-- **Memory**: 8 GB, 16 GB, 32 GB, 64 GB, 96 GB, 128 GB unified memory
-- **Core counts**: Different CPU/GPU core configurations affect parallel performance
+Results below: **Apple M3, 16 GB unified memory**. Numbers vary a lot across M-series chips and memory configs.
 
-To check your hardware: `python bench/reinforcement/detect_hardware.py`
+### Time-to-Competence (primary)
 
-### Scaling Performance
+Train until threshold; stop on first **probe + confirm**. Median ± std over seeds. `--warm` excludes one JIT train cycle from the timer.
 
-**PPO on CartPole-v1** (env FPS / train FPS / memory):
+Protocol: vectorized probe every few thousand steps → one confirmation eval → stop. Thresholds: CartPole **475.0** (Gym official), Pendulum **-200.0**.
 
-| Num Envs | Env FPS      | Train FPS    | Memory (MB) |
-|----------|--------------|--------------|-------------|
-| 16       | 29,426       | 30,396       | 92.0        |
-| 256      | 471,650      | 349,026      | 91.7        |
-| 1,024    | 1,732,100    | 489,436      | 93.8        |
-| 8,192    | 16,796,202   | 701,131      | 78.1        |
-| 16,384   | 31,039,098   | 781,220      | 36.7        |
+**PPO on CartPole-v1** (3 seeds, warm):
 
-*Note: Updated with GAE optimization and improved memory measurement. Sweep stopped at 16,384 envs due to swap growth (+1957MB).*
+| n_envs | Success | STS (samples)   | TTS (s)       | Eval        | Train FPS     |
+|-------:|--------:|----------------:|--------------:|------------:|--------------:|
+| 8      | 100%    | 12,288 ± 2,365  | **1.36 ± 0.21** | 499.2 ± 8.5 | 9,577 ± 384   |
+| 16     | 100%    | 24,576 ± 4,730  | **1.76 ± 0.31** | 500.0 ± 2.0 | 14,077 ± 153  |
 
-**SAC on Pendulum-v1** (env FPS / train FPS / memory):
+**SAC on Pendulum-v1** (5 seeds, warm; `lr=2e-3`, `tau=0.02`, `learning_starts=256`):
 
-| Num Envs | Env FPS      | Train FPS    | Memory (MB) |
-|----------|--------------|--------------|-------------|
-| 16       | 33,943       | 2,294        | 62.9        |
-| 64       | 108,040      | 8,386        | 63.0        |
-| 128      | 220,850      | 16,419       | 63.3        |
+| n_envs | Success | STS (samples) | TTS (s)        | Eval   |
+|-------:|--------:|--------------:|---------------:|-------:|
+| 8      | 100%    | ~16k median   | **~6.9**       | ≥ −200 |
+| 16     | 100%    | ~20k median   | **~4.2**       | ≥ −200 |
 
-*Note: Updated with improved memory measurement. Sweep stopped at 128 envs due to swap growth (+271MB). This is the actual scaling ceiling for this hardware, not a truncation for brevity.*
+STS = samples-to-solve, TTS = wall time-to-solve. Faster target-network Polyak + higher LR cut Pendulum TTS from ~26–44s to ~4–7s.
 
-**Performance Notes:**
-- **Scaling table FPS**: Represents pure training throughput during policy updates (micro-benchmark of the training loop)
-- **Solve performance FPS**: Effective rate including full training loop overhead (policy evaluation rollouts, environment resets, logging, checkpointing, periodic evaluation)
-- The scaling table shows how efficiently the training pipeline scales with parallel environments
-- The solve performance shows real-world time-to-solve including all overhead
-- **Sweep truncation**: Scaling sweeps stop when either (a) swap grows by >256MB (memory pressure) or (b) train FPS plateaus (no further scaling benefit). This represents the actual scaling ceiling for the hardware, not arbitrary truncation for brevity.
+### Scaling (secondary — systems microbench)
 
-### Solve Performance
+Pure rollout / train throughput (not time-to-competence). Sweeps stop on swap growth or train-FPS plateau.
 
-Time to solve environments with multiple parallel environments.
+**PPO on CartPole-v1**:
 
-**PPO on CartPole-v1** (threshold: 475.0 - Gym's official solved criterion):
+| Num Envs | Env FPS    | Train FPS | Memory (MB) |
+|---------:|-----------:|----------:|------------:|
+| 16       | 29,426     | 30,396    | 92.0        |
+| 256      | 471,650    | 349,026   | 91.7        |
+| 1,024    | 1,732,100  | 489,436   | 93.8        |
+| 8,192    | 16,796,202 | 701,131   | 78.1        |
+| 16,384   | 31,039,098 | 781,220   | 36.7        |
 
-| Num Envs | Timesteps | Wall Time (s) | Eval  | Train FPS |
-|----------|-----------|---------------|-------|-----------|
-| 8        | 32,768    | 10.81         | 500.0 | 3,033     |
-| 16       | 32,768    | 9.55          | 500.0 | 3,433     |
+**SAC on Pendulum-v1**:
 
-*Note: Updated to use Gym's official 475.0 threshold instead of custom 440.0. Solve time overhead includes policy evaluation rollouts, environment reset delays, periodic evaluation, logging, and checkpointing.*
+| Num Envs | Env FPS | Train FPS | Memory (MB) |
+|---------:|--------:|----------:|------------:|
+| 16       | 33,943  | 2,294     | 62.9        |
+| 64       | 108,040 | 8,386     | 63.0        |
+| 128      | 220,850 | 16,419    | 63.3        |
 
-**SAC on Pendulum-v1** (threshold: -200.0):
+Scaling FPS = training-loop microbench. TTS table = full early-stop solve path (what you actually care about).
 
-| Num Envs | Timesteps | Wall Time (s) | Eval   | Train FPS |
-|----------|-----------|---------------|--------|-----------|
-| 8        | 32,768    | 45.06         | -148.2 | 727       |
-| 16       | 65,536    | 50.62         | -162.7 | 1,295     |
-
-*Note: Multi-seed investigation (5 seeds) shows 16 envs achieves 1.68x wall-time speedup over 8 envs (48.3s vs 80.9s) despite requiring more timesteps (98,304 vs 65,536). Original single-seed data showed noise; statistical analysis confirms 16 envs is superior for solve performance. Solve time overhead includes policy evaluation rollouts, environment reset delays, periodic evaluation, logging, and checkpointing.*
 
 ## Why
 
