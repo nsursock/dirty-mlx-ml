@@ -46,11 +46,25 @@ class CSVLogger:
             if k not in self._keys:
                 self._keys.append(k)
         self._rows.append({k: row.get(k, "") for k in self._keys})
+        
+        # Sort keys: time/*, rollout/*, train/*
+        def key_sort(k):
+            if k.startswith("time/"):
+                return (0, k)
+            elif k.startswith("rollout/"):
+                return (1, k)
+            elif k.startswith("train/"):
+                return (2, k)
+            else:
+                return (3, k)
+        
+        sorted_keys = sorted(self._keys, key=key_sort)
+        
         with open(self.path, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=self._keys, extrasaction="ignore")
+            w = csv.DictWriter(f, fieldnames=sorted_keys, extrasaction="ignore")
             w.writeheader()
             for r in self._rows:
-                w.writerow({k: r.get(k, "") for k in self._keys})
+                w.writerow({k: r.get(k, "") for k in sorted_keys})
         self._vals.clear()
         self._means.clear()
 

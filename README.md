@@ -208,7 +208,7 @@ Time to solve environments with multiple parallel environments.
 | 512      | 196,608   | 9.65          | 462.0 | 20,371    |
 | 1,024    | 393,216   | 19.57         | 455.0 | 20,089    |
 
-**SAC on Pendulum-v1** (threshold: -300.0):
+**SAC on Pendulum-v1** (threshold: -200.0):
 
 | Num Envs | Timesteps | Wall Time (s) | Eval   | Train FPS |
 |----------|-----------|---------------|--------|-----------|

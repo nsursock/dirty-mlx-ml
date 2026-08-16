@@ -1,6 +1,6 @@
 algo: sac
 env_id: Pendulum-v1
-num_envs: 8
+num_envs: 32
 seed: 0
 total_timesteps: 60000
 log_interval: 50
