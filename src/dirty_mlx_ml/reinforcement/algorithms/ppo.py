@@ -238,7 +238,7 @@ class PPO:
         fps = int((self.num_timesteps - self._num_timesteps_at_start) / elapsed)
         self.logger.record("time/fps", fps)
         self.logger.record("time/iterations", iteration)
-        self.logger.record("time/time_elapsed", int(elapsed))
+        self.logger.record("time/time_elapsed", elapsed)
         self.logger.record("time/total_timesteps", self.num_timesteps)
         mx.eval(self._roll_rew_sum, self._roll_len_sum, self._roll_ep_count)
         n_ep = max(to_float(self._roll_ep_count), 1.0)
