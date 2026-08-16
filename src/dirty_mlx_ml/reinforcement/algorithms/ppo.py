@@ -87,7 +87,64 @@ class PPO:
         self._last_episode_starts = mx.ones((self.n_envs,))
         self.start_time = None
         self._num_timesteps_at_start = 0
+        self._compiled_mb_step = None
 
+    def _build_compiled_mb_step(self):
+        policy = self.policy
+        optimizer = self.optimizer
+        clip_range = self.clip_range
+        ent_coef, vf_coef = self.ent_coef, self.vf_coef
+        normalize = self.normalize_advantage
+        discrete = self.discrete
+        max_grad_norm = self.max_grad_norm
+        clip_range_vf = self.clip_range_vf
+        use_vf_clip = clip_range_vf is not None
+        vf_clip = 0.0 if clip_range_vf is None else float(clip_range_vf)
+        do_clip_grad = max_grad_norm is not None
+        grad_clip = 0.0 if max_grad_norm is None else float(max_grad_norm)
+
+        def mb_step(obs, actions, old_values, old_log_prob, advantages, returns):
+            def loss_fn(model):
+                if discrete:
+                    values, log_prob, entropy = model.evaluate(
+                        obs, mx.reshape(actions, (-1,)).astype(mx.int32)
+                    )
+                else:
+                    values, log_prob, entropy = model.evaluate(obs, actions)
+                adv = advantages
+                if normalize:
+                    adv = (adv - mx.mean(adv)) / (mx.std(adv) + 1e-8)
+                ratio = mx.exp(log_prob - old_log_prob)
+                p1 = adv * ratio
+                p2 = adv * mx.clip(ratio, 1.0 - clip_range, 1.0 + clip_range)
+                policy_loss = -mx.mean(mx.minimum(p1, p2))
+                if use_vf_clip:
+                    values_pred = old_values + mx.clip(values - old_values, -vf_clip, vf_clip)
+                else:
+                    values_pred = values
+                value_loss = mx.mean((returns - values_pred) ** 2)
+                entropy_loss = -mx.mean(entropy)
+                loss = policy_loss + ent_coef * entropy_loss + vf_coef * value_loss
+                clip_frac = mx.mean((mx.abs(ratio - 1.0) > clip_range).astype(mx.float32))
+                approx_kl = mx.mean((ratio - 1.0) - (log_prob - old_log_prob))
+                return loss, policy_loss, value_loss, entropy_loss, clip_frac, approx_kl
+
+            (loss, pg, vl, en, cf, kl), grads = nn.value_and_grad(policy, loss_fn)(policy)
+            if do_clip_grad:
+                grads, _ = optim.clip_grad_norm(grads, grad_clip)
+            optimizer.update(policy, grads)
+            return loss, pg, vl, en, cf, kl
+
+        return mx.compile(
+            mb_step,
+            inputs=[policy.state, optimizer.state],
+            outputs=[policy.state, optimizer.state],
+        )
+
+    def _get_compiled_mb_step(self):
+        if self._compiled_mb_step is None:
+            self._compiled_mb_step = self._build_compiled_mb_step()
+        return self._compiled_mb_step
 
     def _update_ep_stats(self, rewards, dones):
         # pure MLX — no host sync on hot path
@@ -146,68 +203,31 @@ class PPO:
         )
 
     def train(self):
-        clip_range = self.clip_range
-        policy = self.policy
-        optimizer = self.optimizer
-        ent_coef, vf_coef = self.ent_coef, self.vf_coef
-        normalize = self.normalize_advantage
-        discrete = self.discrete
-        max_grad_norm = self.max_grad_norm
-        clip_range_vf = self.clip_range_vf
-
         pg_s = vl_s = en_s = cf_s = kl_s = mx.array(0.0)
         n_mb = 0
         last_loss = mx.array(0.0)
         continue_training = True
-
-        def loss_fn(model, batch):
-            obs, actions = batch["obs"], batch["actions"]
-            if discrete:
-                values, log_prob, entropy = model.evaluate(obs, mx.reshape(actions, (-1,)).astype(mx.int32))
-            else:
-                values, log_prob, entropy = model.evaluate(obs, actions)
-            advantages = batch["advantages"]
-            if normalize:
-                advantages = (advantages - mx.mean(advantages)) / (mx.std(advantages) + 1e-8)
-            ratio = mx.exp(log_prob - batch["old_log_prob"])
-            p1 = advantages * ratio
-            p2 = advantages * mx.clip(ratio, 1.0 - clip_range, 1.0 + clip_range)
-            policy_loss = -mx.mean(mx.minimum(p1, p2))
-            if clip_range_vf is None:
-                values_pred = values
-            else:
-                values_pred = batch["old_values"] + mx.clip(
-                    values - batch["old_values"], -clip_range_vf, clip_range_vf
-                )
-            value_loss = mx.mean((batch["returns"] - values_pred) ** 2)
-            entropy_loss = -mx.mean(entropy)
-            loss = policy_loss + ent_coef * entropy_loss + vf_coef * value_loss
-            extras = (
-                policy_loss,
-                value_loss,
-                entropy_loss,
-                mx.mean((mx.abs(ratio - 1.0) > clip_range).astype(mx.float32)),
-                mx.mean((mx.exp(log_prob - batch["old_log_prob"]) - 1.0) - (log_prob - batch["old_log_prob"])),
-            )
-            return loss, extras
-
-        loss_and_grad = nn.value_and_grad(policy, loss_fn)
+        mb_step = self._get_compiled_mb_step()
+        target_kl = self.target_kl
 
         for _epoch in range(self.n_epochs):
             for batch in self.buffer.get(self.batch_size):
-                (loss, extras), grads = loss_and_grad(policy, batch)
-                if max_grad_norm is not None:
-                    grads, _ = optim.clip_grad_norm(grads, max_grad_norm)
-                optimizer.update(policy, grads)
-                mx.eval(policy.parameters(), optimizer.state)
+                loss, pg, vl, en, cf, kl = mb_step(
+                    batch["obs"],
+                    batch["actions"],
+                    batch["old_values"],
+                    batch["old_log_prob"],
+                    batch["advantages"],
+                    batch["returns"],
+                )
                 last_loss = loss
-                pg_s = pg_s + extras[0]
-                vl_s = vl_s + extras[1]
-                en_s = en_s + extras[2]
-                cf_s = cf_s + extras[3]
-                kl_s = kl_s + extras[4]
+                pg_s = pg_s + pg
+                vl_s = vl_s + vl
+                en_s = en_s + en
+                cf_s = cf_s + cf
+                kl_s = kl_s + kl
                 n_mb += 1
-                if self.target_kl is not None and to_float(extras[4]) > 1.5 * self.target_kl:
+                if target_kl is not None and to_float(kl) > 1.5 * target_kl:
                     continue_training = False
                     break
             self._n_updates += 1
@@ -215,11 +235,20 @@ class PPO:
                 break
 
         inv = 1.0 / max(n_mb, 1)
-        mx.eval(pg_s, vl_s, en_s, cf_s, kl_s, last_loss)
+        mx.eval(
+            self.policy.state,
+            self.optimizer.state,
+            pg_s,
+            vl_s,
+            en_s,
+            cf_s,
+            kl_s,
+            last_loss,
+        )
         ev = explained_variance(self.buffer.values, self.buffer.returns)
         self.logger.record("train/approx_kl", to_float(kl_s) * inv)
         self.logger.record("train/clip_fraction", to_float(cf_s) * inv)
-        self.logger.record("train/clip_range", clip_range)
+        self.logger.record("train/clip_range", self.clip_range)
         self.logger.record("train/policy_gradient_loss", to_float(pg_s) * inv)
         self.logger.record("train/value_loss", to_float(vl_s) * inv)
         self.logger.record("train/entropy_loss", to_float(en_s) * inv)
