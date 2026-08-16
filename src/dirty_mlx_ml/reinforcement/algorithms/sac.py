@@ -297,8 +297,6 @@ class SAC:
         self.logger.record("train/learning_rate", self.learning_rate)
         self.logger.record("train/loss", to_float(last_loss))
         self.logger.record("train/n_updates", self._n_updates)
-        self.logger.record("train/explained_variance", 0.0)
-        self.logger.record("train/std", 0.0)
 
     def dump_logs(self, iteration: int = 0):
         elapsed = max(time.time() - self.start_time, 1e-9)
@@ -308,9 +306,13 @@ class SAC:
         self.logger.record("time/time_elapsed", elapsed)
         self.logger.record("time/total_timesteps", self.num_timesteps)
         mx.eval(self._roll_rew_sum, self._roll_len_sum, self._roll_ep_count)
-        n_ep = max(to_float(self._roll_ep_count), 1.0)
-        self.logger.record("rollout/ep_rew_mean", to_float(self._roll_rew_sum) / n_ep)
-        self.logger.record("rollout/ep_len_mean", to_float(self._roll_len_sum) / n_ep)
+        n_ep = to_float(self._roll_ep_count)
+        if n_ep > 0:
+            self.logger.record("rollout/ep_rew_mean", to_float(self._roll_rew_sum) / n_ep)
+            self.logger.record("rollout/ep_len_mean", to_float(self._roll_len_sum) / n_ep)
+        else:
+            self.logger.record("rollout/ep_rew_mean", float("nan"))
+            self.logger.record("rollout/ep_len_mean", float("nan"))
         self.logger.record("rollout/success_rate", 0.0)
         self._roll_rew_sum = self._roll_rew_sum * 0.0
         self._roll_len_sum = self._roll_len_sum * 0.0

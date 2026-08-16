@@ -52,28 +52,26 @@ class PendulumVecEnv:
 
     def step(self, action):
         u = mx.clip(mx.reshape(action, (self.num_envs, -1))[:, 0], -self.max_torque, self.max_torque)
-        th, thdot = self._th, self._thdot
+
+        pd = self._prev_done
+        reset_th = mx.random.uniform(-math.pi, math.pi, (self.num_envs,)).astype(mx.float32)
+        reset_thdot = mx.random.uniform(-1.0, 1.0, (self.num_envs,)).astype(mx.float32)
+        th = mx.where(pd, reset_th, self._th)
+        thdot = mx.where(pd, reset_thdot, self._thdot)
+        steps_prev = mx.where(pd, mx.zeros_like(self._steps), self._steps)
+
         costs = _angle_normalize(th) ** 2 + 0.1 * thdot**2 + 0.001 * (u**2)
         newthdot = thdot + (3 * self.g / (2 * self.l) * mx.sin(th) + 3.0 / (self.m * self.l**2) * u) * self.dt
         newthdot = mx.clip(newthdot, -self.max_speed, self.max_speed)
         newth = th + newthdot * self.dt
         reward = -costs
-        steps = self._steps + 1
+        steps = steps_prev + 1
         truncated = steps >= self.max_episode_steps
         terminated = mx.zeros((self.num_envs,), dtype=mx.bool_)
 
-        pd = self._prev_done
-        new_th = mx.random.uniform(-math.pi, math.pi, (self.num_envs,)).astype(mx.float32)
-        new_thdot = mx.random.uniform(-1.0, 1.0, (self.num_envs,)).astype(mx.float32)
-        th = mx.where(pd, new_th, newth)
-        thdot = mx.where(pd, new_thdot, newthdot)
-        steps = mx.where(pd, mx.zeros_like(steps), steps)
-        reward = mx.where(pd, mx.zeros_like(reward), reward)
-        truncated = mx.where(pd, mx.zeros_like(truncated), truncated)
-
         done = terminated | truncated
-        self._th, self._thdot, self._steps, self._prev_done = th, thdot, steps, done
-        obs = mx.stack([mx.cos(th), mx.sin(th), thdot], axis=1).astype(mx.float32)
+        self._th, self._thdot, self._steps, self._prev_done = newth, newthdot, steps, done
+        obs = mx.stack([mx.cos(newth), mx.sin(newth), newthdot], axis=1).astype(mx.float32)
         return obs, reward.astype(mx.float32), done, {"timeouts": truncated.astype(mx.float32)}
 
     def close(self):

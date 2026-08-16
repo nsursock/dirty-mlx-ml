@@ -21,8 +21,6 @@ SAC_TRAIN = {
     "train/learning_rate",
     "train/loss",
     "train/n_updates",
-    "train/explained_variance",
-    "train/std",
 }
 
 
