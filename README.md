@@ -211,6 +211,12 @@ To check your hardware: `python bench/reinforcement/detect_hardware.py`
 
 *Note: Updated with improved memory measurement*
 
+**Performance Notes:**
+- **Scaling table FPS**: Represents pure training throughput during policy updates (micro-benchmark of the training loop)
+- **Solve performance FPS**: Effective rate including full training loop overhead (policy evaluation rollouts, environment resets, logging, checkpointing, periodic evaluation)
+- The scaling table shows how efficiently the training pipeline scales with parallel environments
+- The solve performance shows real-world time-to-solve including all overhead
+
 ### Solve Performance
 
 Time to solve environments with multiple parallel environments.
@@ -228,6 +234,8 @@ Time to solve environments with multiple parallel environments.
 |----------|-----------|---------------|--------|-----------|
 | 8        | 32,768    | 45.06         | -148.2 | 727       |
 | 16       | 65,536    | 50.62         | -162.7 | 1,295     |
+
+*Note: Solve time overhead includes policy evaluation rollouts, environment reset delays, periodic evaluation, logging, and checkpointing. The effective solve FPS (timesteps/wall_time) is lower than the pure training loop FPS shown in scaling tables.*
 
 ## Why
 
