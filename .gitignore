@@ -140,6 +140,7 @@ mlx/
 
 # Logs
 logs/
+feedback/
 
 # IDEs
 .vscode/
