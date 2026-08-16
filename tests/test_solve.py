@@ -52,7 +52,7 @@ def test_ppo_solves_cartpole():
     elapsed = time.time() - t0
     fps = 160_000 / max(elapsed, 1e-9)
     mean = _eval_mean(model, "CartPole-v1", n_eps=20, max_steps=500)
-    assert mean >= 440.0, f"CartPole not solved: mean={mean:.1f} fps={fps:.0f}"
+    assert mean >= 475.0, f"CartPole not solved: mean={mean:.1f} fps={fps:.0f}"
     assert fps > 2000, f"too slow: fps={fps:.0f}"
 
 

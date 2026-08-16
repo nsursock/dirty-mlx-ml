@@ -384,7 +384,7 @@ def main():
     ppo = run_solve_bench(
         "PPO",
         "CartPole-v1",
-        threshold=440.0,  # From test_solve.py
+        threshold=475.0,  # Gym's official CartPole-v1 solved criterion
         max_timesteps=160_000,  # From test_solve.py
         eval_every=32_768,
         n_eval_eps=20,  # From test_solve.py

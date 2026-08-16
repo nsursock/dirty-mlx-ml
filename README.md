@@ -221,12 +221,14 @@ To check your hardware: `python bench/reinforcement/detect_hardware.py`
 
 Time to solve environments with multiple parallel environments.
 
-**PPO on CartPole-v1** (threshold: 440.0):
+**PPO on CartPole-v1** (threshold: 475.0 - Gym's official solved criterion):
 
 | Num Envs | Timesteps | Wall Time (s) | Eval  | Train FPS |
 |----------|-----------|---------------|-------|-----------|
 | 8        | 32,768    | 10.81         | 500.0 | 3,033     |
 | 16       | 32,768    | 9.55          | 500.0 | 3,433     |
+
+*Note: Updated to use Gym's official 475.0 threshold instead of custom 440.0. Solve time overhead includes policy evaluation rollouts, environment reset delays, periodic evaluation, logging, and checkpointing.*
 
 **SAC on Pendulum-v1** (threshold: -200.0):
 
@@ -235,7 +237,7 @@ Time to solve environments with multiple parallel environments.
 | 8        | 32,768    | 45.06         | -148.2 | 727       |
 | 16       | 65,536    | 50.62         | -162.7 | 1,295     |
 
-*Note: Solve time overhead includes policy evaluation rollouts, environment reset delays, periodic evaluation, logging, and checkpointing. The effective solve FPS (timesteps/wall_time) is lower than the pure training loop FPS shown in scaling tables.*
+*Note: Solve time overhead includes policy evaluation rollouts, environment reset delays, periodic evaluation, logging, and checkpointing.*
 
 ## Why
 
