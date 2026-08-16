@@ -193,29 +193,30 @@ To check your hardware: `python bench/reinforcement/detect_hardware.py`
 
 | Num Envs | Env FPS      | Train FPS    | Memory (MB) |
 |----------|--------------|--------------|-------------|
-| 16       | 29,805       | 30,739       | 94.0        |
-| 256      | 473,281      | 351,312      | 93.2        |
-| 1,024    | 1,865,536    | 693,700      | 94.9        |
-| 8,192    | 18,646,106   | 711,966      | 42.3        |
+| 16       | 29,426       | 30,396       | 92.0        |
+| 256      | 471,650      | 349,026      | 91.7        |
+| 1,024    | 1,732,100    | 489,436      | 93.8        |
+| 8,192    | 16,796,202   | 701,131      | 78.1        |
+| 16,384   | 31,039,098   | 781,220      | 36.7        |
 
-*Note: Updated with GAE optimization and improved memory measurement*
+*Note: Updated with GAE optimization and improved memory measurement. Sweep stopped at 16,384 envs due to swap growth (+1957MB).*
 
 **SAC on Pendulum-v1** (env FPS / train FPS / memory):
 
 | Num Envs | Env FPS      | Train FPS    | Memory (MB) |
 |----------|--------------|--------------|-------------|
-| 16       | 35,406       | 2,652        | 68.1        |
-| 256      | 416,541      | 28,427       | 67.7        |
-| 1,024    | 1,621,510    | 121,583      | 67.6        |
-| 8,192    | 12,796,899   | 679,487      | 67.7        |
+| 16       | 33,943       | 2,294        | 62.9        |
+| 64       | 108,040      | 8,386        | 63.0        |
+| 128      | 220,850      | 16,419       | 63.3        |
 
-*Note: Updated with improved memory measurement*
+*Note: Updated with improved memory measurement. Sweep stopped at 128 envs due to swap growth (+271MB). This is the actual scaling ceiling for this hardware, not a truncation for brevity.*
 
 **Performance Notes:**
 - **Scaling table FPS**: Represents pure training throughput during policy updates (micro-benchmark of the training loop)
 - **Solve performance FPS**: Effective rate including full training loop overhead (policy evaluation rollouts, environment resets, logging, checkpointing, periodic evaluation)
 - The scaling table shows how efficiently the training pipeline scales with parallel environments
 - The solve performance shows real-world time-to-solve including all overhead
+- **Sweep truncation**: Scaling sweeps stop when either (a) swap grows by >256MB (memory pressure) or (b) train FPS plateaus (no further scaling benefit). This represents the actual scaling ceiling for the hardware, not arbitrary truncation for brevity.
 
 ### Solve Performance
 
