@@ -14,7 +14,7 @@ Issues identified from AI feedback reviews, organized by priority level.
 | **P2** | Wall Time vs Throughput Discrepancy | PPO 16 envs shows 28,420 Train FPS in scaling table but only 3,433 FPS effective solve rate | Add footnote explaining solve time overhead (policy evaluation rollouts, environment reset delays, logging, checkpointing) | Readers will think scaling table numbers are artificial micro-benchmarks | Gemini | `140925f` |
 | **P2** | PPO Threshold Clarity | PPO threshold 440.0 is custom, not Gym's actual 475 solved criterion | Label threshold as custom bar rather than implying it's canonical benchmark | Avoids misleading benchmark claims | Claude | `6ae429a` |
 | **P2** | SAC Solve Performance Investigation | SAC 16 envs worse than 8 envs (−162.7 vs −148.2) despite more timesteps | Investigate if this is noise or regression; need multi-seed data | Currently unclear if more parallelism helps or hurts | Claude | `6c9e7f1` |
-| **P3** | SAC Sweep Truncation Explanation | SAC train FPS still climbing at table end (178K→1.18M) but stops at 8,192 envs | Explain why sweep stopped at 8,192 (truncated for brevity vs real ceiling) | Currently misleading about where scaling actually ends | Claude | - |
+| **P3** | SAC Sweep Truncation Explanation | SAC train FPS still climbing at table end (178K→1.18M) but stops at 8,192 envs | Explain why sweep stopped at 8,192 (truncated for brevity vs real ceiling) | Currently misleading about where scaling actually ends | Claude | `75a9c6f` |
 | **P3** | Solve Performance Methodology | Current "time to solve" based on one training run, one seed, one evaluation | Improve methodology as noted in P1 multi-seed benchmarks | Better benchmark practices | ChatGPT | - |
 
 ## Summary
@@ -22,7 +22,7 @@ Issues identified from AI feedback reviews, organized by priority level.
 - **P0 (Critical)**: 2 issues - Fundamental correctness problems (**2 completed** ✅)
 - **P1 (High)**: 4 issues - Performance and reliability concerns (**3 completed** ✅)
 - **P2 (Medium)**: 4 issues - Documentation and clarity needs (**4 completed** ✅)
-- **P3 (Low)**: 2 issues - Minor improvements
+- **P3 (Low)**: 2 issues - Minor improvements (**1 completed** ✅)
 
 ## Key Consensus Issues
 
