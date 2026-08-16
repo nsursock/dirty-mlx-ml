@@ -179,6 +179,7 @@ Primary metric is **time-to-competence (TTS)**: wall-clock until a competent pol
 ```bash
 python bench/reinforcement/benchmark_solve.py --warm --seeds 5
 python bench/reinforcement/benchmark_scaling.py   # systems microbench (secondary)
+python bench/reinforcement/benchmark_baselines.py # cross-framework baselines (optional deps)
 python bench/reinforcement/detect_hardware.py
 ```
 
@@ -207,6 +208,43 @@ Protocol: vectorized probe every few thousand steps → one confirmation eval �
 | 16     | 100%    | ~20k median   | **~4.2**       | ≥ −200 |
 
 STS = samples-to-solve, TTS = wall time-to-solve. Faster target-network Polyak + higher LR cut Pendulum TTS from ~26–44s to ~4–7s.
+
+### Cross-framework baselines
+
+Same tasks against reference implementations on the same machine, reporting normalized **samples/sec** and **time-to-threshold**. These are optional and *not* in `requirements.txt`/`pyproject.toml`; install into a separate venv:
+
+```bash
+/opt/homebrew/bin/python3.14 -m venv .baselines-venv
+.baselines-venv/bin/pip install -e .
+.baselines-venv/bin/pip install mlx mlx-metal psutil numpy \
+    stable-baselines3 gymnasium torch jax flax optax distrax gymnax chex
+.baselines-venv/bin/python bench/reinforcement/benchmark_baselines.py --seeds 3
+```
+
+Configs: **MLX** uses this repo's tuned HPs (`lr=1e-3` PPO / `lr=2e-3`,`tau=0.02` SAC); **SB3** uses its defaults; **purejaxrl** uses its standard PPO config. MLX and purejaxrl run 16 parallel envs; SB3 runs a single env (its typical CPU setup).
+
+**PPO on CartPole-v1** (threshold 475.0, 3 seeds, median):
+
+| Backend   | Success | STS (samples) | TTS (s) | Eval | samples/sec |
+|-----------|--------:|--------------:|--------:|-----:|------------:|
+| **MLX**   | 100%    | 36,864        | 2.39    | 486  | 15,416      |
+| SB3 CPU   | 100%    | 20,480        | 4.76    | 496  | 4,522       |
+| SB3 MPS   | 100%    | 22,528        | 51.65   | 495  | 436         |
+| purejaxrl | 100%    | 82,304        | 0.48*   | 500  | 171,342     |
+
+**SAC on Pendulum-v1** (threshold −200.0, 3 seeds, median):
+
+| Backend | Success | STS (samples) | TTS (s) | Eval  | samples/sec |
+|---------|--------:|--------------:|--------:|------:|------------:|
+| **MLX** | 100%    | 20,480        | 3.54    | −160  | 5,763       |
+| SB3 CPU | 100%    | 4,096         | 12.59   | −148  | 325         |
+| SB3 MPS | 100%    | 4,096         | 66.92   | −148  | 61          |
+
+Notes:
+
+- **SB3 MPS is slower than SB3 CPU.** PyTorch MPS has high per-op overhead on the small `MlpPolicy` tensors these tasks use (a [known SB3 issue](https://github.com/DLR-RM/stable-baselines3/issues/1245)); it is not representative of MPS on larger models.
+- **purejaxrl** is PPO-only (no SAC). Its TTS is a *proxy* derived from training returns at 171k samples/sec (`STS / throughput`), not a held-out eval, so the `*` value is approximate. It is the most throughput-efficient but needs ~2–4x more samples to solve CartPole.
+- SB3 SAC is more sample-efficient than MLX SAC (solves in ~4k vs ~20k samples) but ~3.5x slower in wall-clock on a single CPU env.
 
 ### Scaling (secondary — systems microbench)
 
