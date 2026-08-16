@@ -176,25 +176,40 @@ pytest tests/ -q -m slow
 
 Performance on Apple Silicon (M-series). Run with `python bench/reinforcement/benchmark_scaling.py` and `python bench/reinforcement/benchmark_solve.py`.
 
+### Hardware Context
+
+Benchmark results below were obtained on: **Apple M3, 16 GB unified memory**.
+
+Performance may vary significantly across different Apple Silicon configurations:
+- **Chip variants**: M1, M1 Pro/Max/Ultra, M2, M2 Pro/Max/Ultra, M3, M3 Pro/Max/Ultra
+- **Memory**: 8 GB, 16 GB, 32 GB, 64 GB, 96 GB, 128 GB unified memory
+- **Core counts**: Different CPU/GPU core configurations affect parallel performance
+
+To check your hardware: `python bench/reinforcement/detect_hardware.py`
+
 ### Scaling Performance
 
 **PPO on CartPole-v1** (env FPS / train FPS / memory):
 
 | Num Envs | Env FPS      | Train FPS    | Memory (MB) |
 |----------|--------------|--------------|-------------|
-| 16       | 29,809       | 28,420       | 94.4        |
-| 256      | 687,120      | 350,206      | 94.3        |
-| 1,024    | 2,520,646    | 648,054      | 96.6        |
-| 8,192    | 19,278,260   | 708,681      | 67.6        |
+| 16       | 29,805       | 30,739       | 94.0        |
+| 256      | 473,281      | 351,312      | 93.2        |
+| 1,024    | 1,865,536    | 693,700      | 94.9        |
+| 8,192    | 18,646,106   | 711,966      | 42.3        |
+
+*Note: Updated with GAE optimization and improved memory measurement*
 
 **SAC on Pendulum-v1** (env FPS / train FPS / memory):
 
 | Num Envs | Env FPS      | Train FPS    | Memory (MB) |
 |----------|--------------|--------------|-------------|
-| 16       | 15,290       | 2,509        | 77.4        |
-| 256      | 508,804      | 34,548       | 77.8        |
-| 1,024    | 2,176,105    | 178,440      | 77.8        |
-| 8,192    | 20,454,478   | 1,181,543    | 76.7        |
+| 16       | 35,406       | 2,652        | 68.1        |
+| 256      | 416,541      | 28,427       | 67.7        |
+| 1,024    | 1,621,510    | 121,583      | 67.6        |
+| 8,192    | 12,796,899   | 679,487      | 67.7        |
+
+*Note: Updated with improved memory measurement*
 
 ### Solve Performance
 
