@@ -234,6 +234,76 @@ def run_task(task_id, backend, device, seed):
     raise ValueError(f"unknown backend: {backend}")
 
 
+def _throughput_mlx(num_envs, n_cycles=5):
+    env = make("CartPole-v1", num_envs=num_envs, seed=0)
+    model = PPO(
+        "MlpPolicy", env, learning_rate=1e-3, n_steps=256, batch_size=128,
+        n_epochs=20, seed=0, policy_kwargs={"net_arch": [64, 64]},
+    )
+    model._last_obs, _ = env.reset(seed=0)
+    model.collect_rollouts()
+    model.train()
+    t0 = time.time()
+    for _ in range(n_cycles):
+        model.collect_rollouts()
+        model.train()
+    wall = time.time() - t0
+    samples = model.n_steps * num_envs * n_cycles
+    env.close()
+    return samples / max(wall, 1e-9)
+
+
+def _throughput_pjr(num_envs, num_updates=8):
+    import jax
+    import purejaxrl_ppo as pjr
+
+    num_steps = 256
+    total = num_steps * num_envs * num_updates
+    config = {
+        "LR": 3e-4, "NUM_ENVS": num_envs, "NUM_STEPS": num_steps,
+        "TOTAL_TIMESTEPS": total, "UPDATE_EPOCHS": 4, "NUM_MINIBATCHES": 4,
+        "GAMMA": 0.99, "GAE_LAMBDA": 0.95, "CLIP_EPS": 0.2,
+        "ENT_COEF": 0.01, "VF_COEF": 0.5, "MAX_GRAD_NORM": 0.5,
+        "ACTIVATION": "tanh", "ENV_NAME": "CartPole-v1",
+        "ANNEAL_LR": True, "DEBUG": False,
+    }
+    train_jit = jax.jit(pjr.make_train(config))
+    rng = jax.random.PRNGKey(0)
+    train_jit(rng)  # warmup / compile
+    rng = jax.random.PRNGKey(0)
+    t0 = time.time()
+    out = train_jit(rng)
+    np.asarray(out["metrics"]["returned_episode_returns"]).sum()  # host sync
+    wall = time.time() - t0
+    return total / max(wall, 1e-9)
+
+
+def run_sweep(env_list):
+    print("\n" + "=" * 96)
+    print("CartPole PPO — training throughput vs num_envs (MLX vs purejaxrl/JAX-CPU)")
+    print("=" * 96)
+    print(f"{'num_envs':>10} {'MLX samples/sec':>18} {'purejaxrl samples/sec':>22} {'MLX/JAX':>9}")
+    print("-" * 96)
+    for n in env_list:
+        mlx_sps = pjr_sps = None
+        try:
+            mlx_sps = _throughput_mlx(n)
+        except Exception as e:
+            print(f"{n:>10}  MLX ERROR: {type(e).__name__}: {e}")
+        try:
+            pjr_sps = _throughput_pjr(n)
+        except Exception as e:
+            print(f"{n:>10}  purejaxrl ERROR: {type(e).__name__}: {e}")
+        if mlx_sps and pjr_sps:
+            ratio = mlx_sps / pjr_sps
+            print(
+                f"{n:>10} {mlx_sps:>18,.0f} {pjr_sps:>22,.0f} {ratio:>9.2f}x",
+                flush=True,
+            )
+        else:
+            print(f"{n:>10} {'—':>18} {'—':>22} {'—':>9}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Cross-framework RL baselines")
     parser.add_argument("--seeds", type=int, default=3)
@@ -242,7 +312,13 @@ def main():
         "--backends", nargs="+", default=["mlx", "sb3-cpu", "sb3-mps", "purejaxrl"],
         choices=["mlx", "sb3-cpu", "sb3-mps", "purejaxrl"],
     )
+    parser.add_argument("--sweep", action="store_true", help="Run num_envs throughput sweep")
+    parser.add_argument("--sweep-envs", type=int, nargs="+", default=[16, 64, 256, 1024, 4096])
     args = parser.parse_args()
+
+    if args.sweep:
+        run_sweep(args.sweep_envs)
+        return
 
     rows = []
     for task_id in args.tasks:

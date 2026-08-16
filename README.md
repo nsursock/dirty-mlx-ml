@@ -227,7 +227,7 @@ Configs: **MLX** uses this repo's tuned HPs (`lr=1e-3` PPO / `lr=2e-3`,`tau=0.02
 
 | Backend   | Success | STS (samples) | TTS (s) | Eval | samples/sec |
 |-----------|--------:|--------------:|--------:|-----:|------------:|
-| **MLX**   | 100%    | 36,864        | 2.39    | 486  | 15,416      |
+| **MLX**   | 100%    | 32,768        | 1.37    | 483  | 26,767      |
 | SB3 CPU   | 100%    | 20,480        | 4.76    | 496  | 4,522       |
 | SB3 MPS   | 100%    | 22,528        | 51.65   | 495  | 436         |
 | purejaxrl | 100%    | 82,304        | 0.48*   | 500  | 171,342     |
@@ -236,7 +236,7 @@ Configs: **MLX** uses this repo's tuned HPs (`lr=1e-3` PPO / `lr=2e-3`,`tau=0.02
 
 | Backend | Success | STS (samples) | TTS (s) | Eval  | samples/sec |
 |---------|--------:|--------------:|--------:|------:|------------:|
-| **MLX** | 100%    | 20,480        | 3.54    | −160  | 5,763       |
+| **MLX** | 100%    | 20,480        | 1.53    | −171  | 13,367      |
 | SB3 CPU | 100%    | 4,096         | 12.59   | −148  | 325         |
 | SB3 MPS | 100%    | 4,096         | 66.92   | −148  | 61          |
 
@@ -245,6 +245,20 @@ Notes:
 - **SB3 MPS is slower than SB3 CPU.** PyTorch MPS has high per-op overhead on the small `MlpPolicy` tensors these tasks use (a [known SB3 issue](https://github.com/DLR-RM/stable-baselines3/issues/1245)); it is not representative of MPS on larger models.
 - **purejaxrl** is PPO-only (no SAC). Its TTS is a *proxy* derived from training returns at 171k samples/sec (`STS / throughput`), not a held-out eval, so the `*` value is approximate. It is the most throughput-efficient but needs ~2–4x more samples to solve CartPole.
 - SB3 SAC is more sample-efficient than MLX SAC (solves in ~4k vs ~20k samples) but ~3.5x slower in wall-clock on a single CPU env.
+
+### Scaling crossover vs purejaxrl
+
+Raw training throughput (samples/sec) as `num_envs` grows, where MLX's GPU overtakes JAX-CPU:
+
+| num_envs | MLX samples/sec | purejaxrl (JAX-CPU) | MLX/JAX |
+|---------:|----------------:|--------------------:|--------:|
+| 16       | 57,562          | 120,008             | 0.48x   |
+| 64       | 151,683         | 176,446             | 0.86x   |
+| 256      | 213,440         | 199,323             | **1.07x** |
+| 1,024    | 256,186         | 183,688             | **1.39x** |
+| 4,096    | 252,259         | 182,357             | **1.38x** |
+
+Run with `python bench/reinforcement/benchmark_baselines.py --sweep`. purejaxrl's whole-program `jit` + `lax.scan` wins on tiny 16-env loops (zero per-step dispatch); MLX overtakes once the batch is GPU-sized (≥256 envs), where Metal's parallelism amortizes the fixed per-kernel launch cost. JAX-CPU saturates near ~180–200k samples/sec, while MLX keeps scaling with batch width.
 
 ### Scaling (secondary — systems microbench)
 
