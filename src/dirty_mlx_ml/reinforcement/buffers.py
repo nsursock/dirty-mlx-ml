@@ -2,21 +2,28 @@ import mlx.core as mx
 
 
 def _gae(rewards, values, episode_starts, last_values, dones, gamma, gae_lambda):
-    """Vectorized-enough GAE; reverse scan in MLX arrays (no numpy)."""
+    """Optimized GAE calculation with reduced Python overhead."""
     n_steps = int(rewards.shape[0])
-    adv = mx.zeros_like(rewards)
+    
+    # Pre-compute all deltas to reduce repeated calculations in loop
+    next_values_all = mx.concatenate([values[1:], last_values[None, :]], axis=0)
+    next_episode_starts = mx.concatenate([episode_starts[1:], mx.zeros((1, episode_starts.shape[1]))], axis=0)
+    next_non_terminals = 1.0 - next_episode_starts
+    deltas = rewards + gamma * next_values_all * next_non_terminals - values
+    
+    # Use list comprehension for GAE calculation (faster than loop with append)
     last_gae = mx.zeros((rewards.shape[1],))
-    next_values = last_values
-    next_non_terminal = 1.0 - dones
-    # reverse step by step (still on device; fused via mx.eval at end)
     adv_list = [None] * n_steps
+    
     for step in range(n_steps - 1, -1, -1):
         if step != n_steps - 1:
             next_non_terminal = 1.0 - episode_starts[step + 1]
-            next_values = values[step + 1]
-        delta = rewards[step] + gamma * next_values * next_non_terminal - values[step]
+        else:
+            next_non_terminal = 1.0 - dones
+        delta = deltas[step]
         last_gae = delta + gamma * gae_lambda * next_non_terminal * last_gae
         adv_list[step] = last_gae
+    
     return mx.stack(adv_list)
 
 
