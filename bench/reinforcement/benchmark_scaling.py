@@ -43,7 +43,8 @@ def measure_env_fps(env, num_steps: int = 1000) -> float:
                 env.action_space.high[0], 
                 (env.num_envs, env.action_space.shape[0])
             )
-        obs, _, _, _ = env.step(action)
+        obs, reward, _, _ = env.step(action)
+        mx.eval(obs, reward)  # Force actual computation instead of lazy graph building
     elapsed = time.time() - start
     total_steps = num_steps * env.num_envs
     return total_steps / elapsed
