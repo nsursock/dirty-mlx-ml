@@ -93,6 +93,62 @@ Both are vectorized (`num_envs`) and return MLX arrays. API shape: `reset` → `
 
 Bring your own env by matching that interface and `observation_space` / `action_space` (see `spaces.py`).
 
+## Configuration
+
+Use YAML configs to tune hyperparameters without editing code. Example configs are provided in `configs/`:
+
+```bash
+configs/
+  ppo_cartpole.yaml
+  sac_pendulum.yaml
+```
+
+**PPO config example** (`configs/ppo_cartpole.yaml`):
+
+```yaml
+algo: ppo
+env_id: CartPole-v1
+num_envs: 16
+seed: 0
+total_timesteps: 100000
+
+learning_rate: 0.0003
+n_steps: 256
+batch_size: 256
+n_epochs: 10
+gamma: 0.99
+gae_lambda: 0.95
+clip_range: 0.2
+
+policy_kwargs:
+  net_arch: [64, 64]
+```
+
+**SAC config example** (`configs/sac_pendulum.yaml`):
+
+```yaml
+algo: sac
+env_id: Pendulum-v1
+num_envs: 8
+seed: 0
+total_timesteps: 60000
+
+learning_rate: 0.0003
+buffer_size: 200000
+learning_starts: 1000
+batch_size: 256
+tau: 0.005
+gamma: 0.99
+train_freq: 1
+gradient_steps: 1
+ent_coef: auto
+
+policy_kwargs:
+  net_arch: [256, 256]
+```
+
+Copy and modify these configs to experiment with different hyperparameters for your own environments.
+
 ## Project layout
 
 ```
