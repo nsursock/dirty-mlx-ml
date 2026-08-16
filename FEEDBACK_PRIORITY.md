@@ -8,7 +8,7 @@ Issues identified from AI feedback reviews, organized by priority level.
 | **P0** | Algorithmic Validation Layer | Gap between systems quality and scientific quality; need algorithmic validation to match systems engineering | Build Gymnasium transition-by-transition differential tests; build SB3 numerical differential tests for PPO/SAC | Essential for credibility; current performance claims aren't scientifically validated | ChatGPT, Claude | `7853d4e` |
 | **P1** | Multi-Seed Benchmarks | Single training run, one seed, one evaluation lacks statistical significance | Change benchmarks to use 5 seeds with median±std reporting; define solve as evaluation return ≥ threshold for N consecutive evaluations | Critical for scientific validity; current results could be noise vs regression | Claude, ChatGPT | `b416fc8` |
 | **P1** | SB3 Baseline Comparisons | No comparison against established baselines on same hardware | Add SB3 on CPU, JAX implementations on same Mac, PyTorch MPS comparisons; report normalized metrics (samples/sec, time-to-threshold) | Without baselines, performance claims are not scientifically meaningful | ChatGPT, DeepSeek, Gemini | - |
-| **P1** | PPO Train FPS Bottleneck | PPO train FPS plateaus at ~700k FPS between 1k-8k envs while env FPS scales linearly | Check if GAE/advantage calculations are running on CPU or forcing uncompiled loop; ensure `mx.compile()` wraps minibatch update loop | Major performance bottleneck preventing scaling benefits from being realized | Gemini | - |
+| **P1** | PPO Train FPS Bottleneck | PPO train FPS plateaus at ~700k FPS between 1k-8k envs while env FPS scales linearly | Check if GAE/advantage calculations are running on CPU or forcing uncompiled loop; ensure `mx.compile()` wraps minibatch update loop | Major performance bottleneck preventing scaling benefits from being realized | Gemini | `325cf12` |
 | **P1** | Memory Non-Monotonicity | PPO memory drops from 96.6MB → 67.6MB at 8,192 envs; unclear if measurement artifact | Sample memory multiple times and take median, or note caveat in README | Undermines credibility of memory measurements | Claude | - |
 | **P2** | Hardware Context Missing | No Apple Silicon chip model specified (e.g., M3 Max 16-core CPU/40-core GPU, 64GB Unified Memory) | Add hardware specifications to README benchmark section | Numbers mean nothing without hardware context | Gemini | - |
 | **P2** | Wall Time vs Throughput Discrepancy | PPO 16 envs shows 28,420 Train FPS in scaling table but only 3,433 FPS effective solve rate | Add footnote explaining solve time overhead (policy evaluation rollouts, environment reset delays, logging, checkpointing) | Readers will think scaling table numbers are artificial micro-benchmarks | Gemini | - |
@@ -20,7 +20,7 @@ Issues identified from AI feedback reviews, organized by priority level.
 ## Summary
 
 - **P0 (Critical)**: 2 issues - Fundamental correctness problems (**2 completed** ✅)
-- **P1 (High)**: 4 issues - Performance and reliability concerns (**1 completed** ✅)
+- **P1 (High)**: 4 issues - Performance and reliability concerns (**2 completed** ✅)
 - **P2 (Medium)**: 4 issues - Documentation and clarity needs
 - **P3 (Low)**: 2 issues - Minor improvements
 
