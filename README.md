@@ -182,43 +182,41 @@ Performance on Apple Silicon (M-series). Run with `python bench/reinforcement/be
 
 | Num Envs | Env FPS      | Train FPS    | Memory (MB) |
 |----------|--------------|--------------|-------------|
-| 16       | 133,550      | 29,884       | 94.9        |
-| 256      | 6,035,479    | 294,716      | 96.7        |
-| 1,024    | 20,838,734   | 502,415      | 98.2        |
-| 8,192    | 126,793,381  | 688,175      | 71.2        |
+| 16       | 29,809       | 28,420       | 94.4        |
+| 256      | 687,120      | 350,206      | 94.3        |
+| 1,024    | 2,520,646    | 648,054      | 96.6        |
+| 8,192    | 19,278,260   | 708,681      | 67.6        |
 
 **SAC on Pendulum-v1** (env FPS / train FPS / memory):
 
 | Num Envs | Env FPS      | Train FPS    | Memory (MB) |
 |----------|--------------|--------------|-------------|
-| 16       | 287,410      | 2,486        | 66.7        |
-| 256      | 5,991,027    | 32,234       | 68.5        |
-| 1,024    | 25,261,542   | 118,872      | 68.5        |
-| 8,192    | 186,075,321  | 676,473      | 67.8        |
+| 16       | 15,290       | 2,509        | 77.4        |
+| 256      | 508,804      | 34,548       | 77.8        |
+| 1,024    | 2,176,105    | 178,440      | 77.8        |
+| 8,192    | 20,454,478   | 1,181,543    | 76.7        |
 
 ### Solve Performance
 
 Time to solve environments with multiple parallel environments.
 
-**PPO on CartPole-v1** (threshold: 450.0):
+**PPO on CartPole-v1** (threshold: 440.0):
 
 | Num Envs | Timesteps | Wall Time (s) | Eval  | Train FPS |
 |----------|-----------|---------------|-------|-----------|
-| 256      | 294,912   | 15.00         | 490.6 | 19,662    |
-| 512      | 196,608   | 9.65          | 462.0 | 20,371    |
-| 1,024    | 393,216   | 19.57         | 455.0 | 20,089    |
+| 8        | 32,768    | 10.81         | 500.0 | 3,033     |
+| 16       | 32,768    | 9.55          | 500.0 | 3,433     |
 
 **SAC on Pendulum-v1** (threshold: -200.0):
 
 | Num Envs | Timesteps | Wall Time (s) | Eval   | Train FPS |
 |----------|-----------|---------------|--------|-----------|
-| 256      | 32,768    | 59.81         | -122.8 | 548       |
-| 512      | 49,152    | 46.98         | -123.2 | 1,046     |
-| 1,024    | 81,920    | 55.78         | -123.3 | 1,469     |
+| 8        | 32,768    | 45.06         | -148.2 | 727       |
+| 16       | 65,536    | 50.62         | -162.7 | 1,295     |
 
 ## Why
 
-This started as the RL stack for a personal trading bot on a Mac. PureJaxRL showed how far “keep it on accelerator” can go; this is the dirtier, SB3-flavored cousin for people who live on Apple Silicon and still want PPO/SAC that feel familiar.
+This started as the RL stack for a personal trading bot on a Mac. PureJaxRL showed how far "keep it on accelerator" can go; this is the dirtier, SB3-flavored cousin for people who live on Apple Silicon and still want PPO/SAC that feel familiar.
 
 ## Status
 

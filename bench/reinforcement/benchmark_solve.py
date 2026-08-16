@@ -14,7 +14,7 @@ from dirty_mlx_ml.reinforcement.envs import make
 MAX_NUM_ENVS = 16_384
 START_NUM_ENVS = 1
 # quick slice: set via --envs or default list below
-DEFAULT_ENVS = [256, 512, 1024]
+DEFAULT_ENVS = [8, 16]
 
 
 def get_memory_mb() -> float:
@@ -34,7 +34,6 @@ def is_swapping(baseline: float, growth_mb: float = 256.0) -> bool:
 
 def eval_mean(model, env_id: str, n_eps: int, max_steps: int, seed: int = 123) -> float:
     env = make(env_id, num_envs=1, seed=seed)
-    discrete = hasattr(env.action_space, "n")
     total = 0.0
     for e in range(n_eps):
         obs, _ = env.reset(seed=seed + e)
@@ -43,7 +42,9 @@ def eval_mean(model, env_id: str, n_eps: int, max_steps: int, seed: int = 123) -
         ep = 0.0
         while not done and steps < max_steps:
             action, _ = model.predict(obs, deterministic=True)
-            if discrete:
+            if action.ndim > 1 and action.shape[-1] == 1 and env.action_space.__class__.__name__ == "Discrete":
+                action = action.reshape(-1)
+            elif env.action_space.__class__.__name__ == "Discrete":
                 action = action.reshape(-1)
             obs, rew, done, _ = env.step(action)
             ep += float(rew.reshape(-1)[0].item())
@@ -67,30 +68,28 @@ def train_until_solved(
 ) -> Dict:
     env = make(env_id, num_envs=num_envs, seed=seed)
     if algo_name == "PPO":
-        # min 32 steps for GAE horizon; cap rollout size for speed
-        n_steps = max(32, min(256, 8192 // num_envs))
-        bs = max(1, min(64, 2048 // num_envs))
+        # Use exact hyperparameters from test_solve.py
         model = PPO(
             "MlpPolicy",
             env,
-            n_steps=n_steps,
-            batch_size=bs,
-            n_epochs=10,
-            learning_rate=3e-4,
+            n_steps=256,
+            batch_size=128,
+            n_epochs=20,
+            learning_rate=1e-3,
             seed=seed,
             log_dir=None,
             verbose=0,
         )
     else:
-        # 1 env-step adds n_envs transitions → match with n_envs grad steps
+        # Use exact hyperparameters from test_solve.py
         model = SAC(
             "MlpPolicy",
             env,
-            learning_starts=min(10_000, max(1000, num_envs * 2)),
-            buffer_size=300_000,
+            learning_starts=1000,
+            buffer_size=100_000,
             batch_size=256,
             train_freq=1,
-            gradient_steps=max(1, min(num_envs, 64)),
+            gradient_steps=1,
             seed=seed,
             log_dir=None,
             verbose=0,
@@ -240,11 +239,11 @@ def main():
     ppo = run_solve_bench(
         "PPO",
         "CartPole-v1",
-        threshold=450.0,
-        max_timesteps=400_000,
+        threshold=440.0,  # From test_solve.py
+        max_timesteps=160_000,  # From test_solve.py
         eval_every=32_768,
-        n_eval_eps=5,
-        max_ep_steps=500,
+        n_eval_eps=20,  # From test_solve.py
+        max_ep_steps=500,  # From test_solve.py
         env_list=env_list,
     )
     all_rows.append(("PPO", "CartPole-v1", ppo))
@@ -252,11 +251,11 @@ def main():
     sac = run_solve_bench(
         "SAC",
         "Pendulum-v1",
-        threshold=-300.0,
-        max_timesteps=200_000,
+        threshold=-200.0,  # From test_solve.py
+        max_timesteps=100_000,  # From test_solve.py
         eval_every=16_384,
-        n_eval_eps=5,
-        max_ep_steps=200,
+        n_eval_eps=10,  # From test_solve.py
+        max_ep_steps=200,  # From test_solve.py
         env_list=env_list,
     )
     all_rows.append(("SAC", "Pendulum-v1", sac))
