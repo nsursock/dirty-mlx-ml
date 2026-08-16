@@ -88,6 +88,8 @@ class PPO:
         self.start_time = None
         self._num_timesteps_at_start = 0
         self._compiled_mb_step = None
+        self._compiled_rollout = None
+        self._policy_key = mx.random.key(seed if seed is not None else 0)
 
     def _build_compiled_mb_step(self):
         policy = self.policy
@@ -146,21 +148,74 @@ class PPO:
             self._compiled_mb_step = self._build_compiled_mb_step()
         return self._compiled_mb_step
 
-    def _update_ep_stats(self, rewards, dones):
-        # pure MLX — no host sync on hot path
-        self._ep_rew = self._ep_rew + rewards
-        self._ep_len = self._ep_len + 1.0
-        d = dones.astype(mx.float32)
-        finished = d > 0.5
-        # running sums for mean at dump time
-        n_fin = mx.sum(d)
-        self._roll_rew_sum = self._roll_rew_sum + mx.sum(mx.where(finished, self._ep_rew, 0.0))
-        self._roll_len_sum = self._roll_len_sum + mx.sum(mx.where(finished, self._ep_len, 0.0))
-        self._roll_ep_count = self._roll_ep_count + n_fin
-        mask = 1.0 - d
-        self._ep_rew = self._ep_rew * mask
-        self._ep_len = self._ep_len * mask
 
+
+    def _build_compiled_rollout(self):
+        if self.env._step_fn is None:
+            self.env._build_step()
+        n_steps = self.n_steps
+        n_envs = self.n_envs
+        discrete = self.discrete
+        gamma = self.gamma
+        env_step = self.env._step_fn
+        policy = self.policy
+        action_low = self.env.action_space.low if not discrete else None
+        action_high = self.env.action_space.high if not discrete else None
+        bootstrap_truncated = not discrete
+
+        def rollout(
+            env_state, env_steps, env_prev_done, env_key, policy_key,
+            last_obs, last_episode_starts,
+            ep_rew, ep_len, roll_rew_sum, roll_len_sum, roll_ep_count,
+            buf_obs, buf_actions, buf_rewards, buf_episode_starts, buf_values, buf_log_probs,
+        ):
+            for i in range(n_steps):
+                policy_key, k_act = mx.random.split(policy_key)
+                action, value, log_prob = policy.get_action(last_obs, key=k_act)
+                if discrete:
+                    env_action = action
+                    store_action = mx.reshape(action.astype(mx.float32), (n_envs, 1))
+                else:
+                    env_action = mx.clip(action, action_low, action_high)
+                    store_action = action
+
+                env_state, env_steps, env_prev_done, env_key, new_obs, rewards, dones, truncated = env_step(
+                    env_state, env_steps, env_prev_done, env_key, env_action
+                )
+
+                ep_rew = ep_rew + rewards
+                ep_len = ep_len + 1.0
+                d = dones.astype(mx.float32)
+                finished = d > 0.5
+                roll_rew_sum = roll_rew_sum + mx.sum(mx.where(finished, ep_rew, 0.0))
+                roll_len_sum = roll_len_sum + mx.sum(mx.where(finished, ep_len, 0.0))
+                roll_ep_count = roll_ep_count + mx.sum(d)
+                mask = 1.0 - d
+                ep_rew = ep_rew * mask
+                ep_len = ep_len * mask
+
+                if bootstrap_truncated:
+                    last_v = policy.forward(new_obs)[1]
+                    rewards = rewards + gamma * last_v * truncated
+
+                buf_obs[i] = last_obs
+                buf_actions[i] = store_action
+                buf_rewards[i] = rewards
+                buf_episode_starts[i] = last_episode_starts
+                buf_values[i] = value
+                buf_log_probs[i] = log_prob
+
+                last_obs = new_obs
+                last_episode_starts = dones.astype(mx.float32)
+
+            return (
+                env_state, env_steps, env_prev_done, env_key, policy_key,
+                last_obs, last_episode_starts,
+                ep_rew, ep_len, roll_rew_sum, roll_len_sum, roll_ep_count,
+                buf_obs, buf_actions, buf_rewards, buf_episode_starts, buf_values, buf_log_probs,
+            )
+
+        return mx.compile(rollout, inputs=[policy.state])
 
     def collect_rollouts(self):
         self.buffer.reset()
@@ -168,28 +223,40 @@ class PPO:
             self._last_obs, _ = self.env.reset()
             self._last_episode_starts = mx.ones((self.n_envs,))
 
-        for _ in range(self.n_steps):
-            obs = self._last_obs
-            action, value, log_prob = self.policy.get_action(obs)
-            if self.discrete:
-                env_action = action
-                store_action = mx.reshape(action.astype(mx.float32), (self.n_envs, 1))
-            else:
-                env_action = mx.clip(action, self.env.action_space.low, self.env.action_space.high)
-                store_action = action
+        if self._compiled_rollout is None:
+            self._compiled_rollout = self._build_compiled_rollout()
 
-            new_obs, rewards, dones, infos = self.env.step(env_action)
-            self.num_timesteps += self.n_envs
-            self._update_ep_stats(rewards, dones)
+        (
+            env_state, env_steps, env_prev_done, env_key, policy_key,
+            last_obs, last_episode_starts,
+            ep_rew, ep_len, roll_rew_sum, roll_len_sum, roll_ep_count,
+            buf_obs, buf_actions, buf_rewards, buf_episode_starts, buf_values, buf_log_probs,
+        ) = self._compiled_rollout(
+            self.env._state, self.env._steps, self.env._prev_done, self.env._key, self._policy_key,
+            self._last_obs, self._last_episode_starts,
+            self._ep_rew, self._ep_len, self._roll_rew_sum, self._roll_len_sum, self._roll_ep_count,
+            self.buffer.obs, self.buffer.actions, self.buffer.rewards,
+            self.buffer.episode_starts, self.buffer.values, self.buffer.log_probs,
+        )
 
-            if isinstance(infos, dict) and "timeouts" in infos:
-                timeouts = infos["timeouts"]
-                last_v = self.policy.forward(new_obs)[1]
-                rewards = rewards + self.gamma * last_v * timeouts
+        self.env._state, self.env._steps, self.env._prev_done, self.env._key = (
+            env_state, env_steps, env_prev_done, env_key
+        )
+        self._policy_key = policy_key
+        self._last_obs = last_obs
+        self._last_episode_starts = last_episode_starts
+        self._ep_rew, self._ep_len = ep_rew, ep_len
+        self._roll_rew_sum, self._roll_len_sum, self._roll_ep_count = roll_rew_sum, roll_len_sum, roll_ep_count
+        self.buffer.obs = buf_obs
+        self.buffer.actions = buf_actions
+        self.buffer.rewards = buf_rewards
+        self.buffer.episode_starts = buf_episode_starts
+        self.buffer.values = buf_values
+        self.buffer.log_probs = buf_log_probs
+        self.buffer.pos = self.n_steps
+        self.buffer.full = True
 
-            self.buffer.add(obs, store_action, rewards, self._last_episode_starts, value, log_prob)
-            self._last_obs = new_obs
-            self._last_episode_starts = dones.astype(mx.float32)
+        self.num_timesteps += self.n_steps * self.n_envs
 
         last_values = self.policy.forward(self._last_obs)[1]
         self.buffer.compute_returns_and_advantage(last_values, self._last_episode_starts)

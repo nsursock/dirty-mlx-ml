@@ -108,6 +108,9 @@ class SAC:
         self._num_timesteps_at_start = 0
         self._compiled_step = None
         self._compiled_auto_ent = None
+        self._rng_key = mx.random.key(seed if seed is not None else 0)
+        self._train_sums = None
+        self._train_count = 0
 
     def _scale_action(self, action_tanh):
         return action_tanh * self._act_scale + self._act_bias
@@ -152,9 +155,10 @@ class SAC:
         auto_ent = alpha_mod is not None
         ent_coef_fixed = self.ent_coef_fixed
 
-        def step(obs, next_obs, actions, rewards, terminated, tau_step):
+        def step(key, obs, next_obs, actions, rewards, terminated, tau_step):
+            k1, k2, k3, key = mx.random.split(key, 4)
             if auto_ent:
-                _, log_prob_alpha = actor.sample(obs)
+                _, log_prob_alpha = actor.sample(obs, key=k1)
                 log_prob_alpha = mx.stop_gradient(log_prob_alpha)
 
                 def ent_loss_fn(mod):
@@ -167,7 +171,7 @@ class SAC:
                 e_loss = mx.array(0.0, dtype=mx.float32)
                 ent_coef = mx.array(ent_coef_fixed, dtype=mx.float32)
 
-            next_actions, next_log_prob = actor.sample(next_obs)
+            next_actions, next_log_prob = actor.sample(next_obs, key=k2)
             next_actions = mx.stop_gradient(next_actions)
             next_log_prob = mx.stop_gradient(next_log_prob)
             nq1, nq2 = critic_target(next_obs, next_actions)
@@ -188,7 +192,7 @@ class SAC:
             critic_opt.update(critic, c_grads)
 
             def actor_loss_fn(model):
-                actions_pi, log_prob = model.sample(obs)
+                actions_pi, log_prob = model.sample(obs, key=k3)
                 q1, q2 = critic(obs, actions_pi)
                 loss = mx.mean(ent_coef * log_prob - mx.minimum(q1, q2))
                 return loss, mx.mean(log_prob)
@@ -205,7 +209,7 @@ class SAC:
                 polyak_update(critic.parameters(), critic_target.parameters(), tau_step)
             )
 
-            return c_loss, a_loss, e_loss, ent_coef, l1, l2, q_mean, log_pi_stat
+            return c_loss, a_loss, e_loss, ent_coef, l1, l2, q_mean, log_pi_stat, key
 
         inputs = [actor.state, critic.state, critic_target.state, actor_opt.state, critic_opt.state]
         outputs = [actor.state, critic.state, critic_target.state, actor_opt.state, critic_opt.state]
@@ -232,15 +236,14 @@ class SAC:
         q_mean_s = mx.array(0.0)
         log_pi_s = mx.array(0.0)
         last_loss = mx.array(0.0)
-        n_ent = 0
-        auto_ent = self.alpha_mod is not None
         step_fn = self._get_compiled_step()
 
         for gs in range(gradient_steps):
             batch = self.replay.sample(batch_size)
             # tau_step=0 skips polyak when outside target_update_interval
             tau_step = self.tau if (gs % self.target_update_interval == 0) else 0.0
-            c_loss, a_loss, e_loss, ent_coef, l1, l2, q_mean, log_pi = step_fn(
+            c_loss, a_loss, e_loss, ent_coef, l1, l2, q_mean, log_pi, key = step_fn(
+                self._rng_key,
                 batch["obs"],
                 batch["next_obs"],
                 batch["actions"],
@@ -248,6 +251,7 @@ class SAC:
                 batch["terminated"],
                 tau_step,
             )
+            self._rng_key = key
             critic_s = critic_s + c_loss
             actor_s = actor_s + a_loss
             ent_s = ent_s + ent_coef
@@ -257,50 +261,72 @@ class SAC:
             q_mean_s = q_mean_s + q_mean
             log_pi_s = log_pi_s + log_pi
             last_loss = a_loss
-            if auto_ent:
-                n_ent += 1
 
-        inv = 1.0 / max(gradient_steps, 1)
         self._n_updates += gradient_steps
+        # Accumulate metrics lazily; materialize + log only at dump time so the
+        # per-step hot path stays host-sync free.
+        if self._train_sums is None:
+            self._train_sums = {
+                "actor_loss": mx.array(0.0),
+                "critic_loss": mx.array(0.0),
+                "ent_coef": mx.array(0.0),
+                "ent_coef_loss": mx.array(0.0),
+                "q1": mx.array(0.0),
+                "q2": mx.array(0.0),
+                "q_mean": mx.array(0.0),
+                "log_pi": mx.array(0.0),
+                "loss": mx.array(0.0),
+            }
+        s = self._train_sums
+        s["actor_loss"] = s["actor_loss"] + actor_s
+        s["critic_loss"] = s["critic_loss"] + critic_s
+        s["ent_coef"] = s["ent_coef"] + ent_s
+        s["ent_coef_loss"] = s["ent_coef_loss"] + ent_loss_s
+        s["q1"] = s["q1"] + q1_s
+        s["q2"] = s["q2"] + q2_s
+        s["q_mean"] = s["q_mean"] + q_mean_s
+        s["log_pi"] = s["log_pi"] + log_pi_s
+        s["loss"] = s["loss"] + last_loss
+        self._train_count += 1
+
+    def _flush_train_metrics(self):
+        if not self._train_sums or self._train_count == 0:
+            return
+        s = self._train_sums
         mx.eval(
             self.actor.state,
             self.critic.state,
             self.critic_target.state,
             self.actor_opt.state,
             self.critic_opt.state,
-            actor_s,
-            critic_s,
-            ent_s,
-            ent_loss_s,
-            q1_s,
-            q2_s,
-            q_mean_s,
-            log_pi_s,
-            last_loss,
+            *s.values(),
         )
-        if auto_ent:
+        if self.alpha_mod is not None:
             mx.eval(self.alpha_mod.state, self.ent_opt.state)
 
-        alpha = to_float(ent_s) * inv
-        ent_loss_mean = to_float(ent_loss_s) / max(n_ent, 1) if n_ent else 0.0
-        self.logger.record("train/loss/policy", to_float(actor_s) * inv)
-        self.logger.record("train/actor_loss", to_float(actor_s) * inv)
-        self.logger.record("train/critic_loss", to_float(critic_s) * inv)
-        self.logger.record("train/loss/q1", to_float(q1_s) * inv)
-        self.logger.record("train/loss/q2", to_float(q2_s) * inv)
-        self.logger.record("train/loss/alpha", ent_loss_mean)
-        self.logger.record("train/policy/alpha", alpha)
-        self.logger.record("train/ent_coef", alpha)
-        self.logger.record("train/value/q_mean", to_float(q_mean_s) * inv)
-        self.logger.record("train/policy/log_pi_mean", to_float(log_pi_s) * inv)
-        self.logger.record("train/ent_coef_loss", ent_loss_mean)
+        n = max(self._train_count, 1)
+        self.logger.record("train/loss/policy", to_float(s["actor_loss"]) / n)
+        self.logger.record("train/actor_loss", to_float(s["actor_loss"]) / n)
+        self.logger.record("train/critic_loss", to_float(s["critic_loss"]) / n)
+        self.logger.record("train/loss/q1", to_float(s["q1"]) / n)
+        self.logger.record("train/loss/q2", to_float(s["q2"]) / n)
+        self.logger.record("train/loss/alpha", to_float(s["ent_coef_loss"]) / n)
+        self.logger.record("train/policy/alpha", to_float(s["ent_coef"]) / n)
+        self.logger.record("train/ent_coef", to_float(s["ent_coef"]) / n)
+        self.logger.record("train/value/q_mean", to_float(s["q_mean"]) / n)
+        self.logger.record("train/policy/log_pi_mean", to_float(s["log_pi"]) / n)
+        self.logger.record("train/ent_coef_loss", to_float(s["ent_coef_loss"]) / n)
         self.logger.record("train/learning_rate", self.learning_rate)
-        self.logger.record("train/loss", to_float(last_loss))
+        self.logger.record("train/loss", to_float(s["loss"]) / n)
         self.logger.record("train/n_updates", self._n_updates)
+        for k in self._train_sums:
+            self._train_sums[k] = mx.array(0.0)
+        self._train_count = 0
 
     def dump_logs(self, iteration: int = 0):
         elapsed = max(time.time() - self.start_time, 1e-9)
         fps = int((self.num_timesteps - self._num_timesteps_at_start) / elapsed)
+        self._flush_train_metrics()
         self.logger.record("time/fps", fps)
         self.logger.record("time/iterations", iteration)
         self.logger.record("time/time_elapsed", elapsed)

@@ -60,13 +60,13 @@ class ActorCriticDiscrete(nn.Module):
         value = self.vf(obs).squeeze(-1)
         return logits, value
 
-    def get_action(self, obs, deterministic=False):
+    def get_action(self, obs, deterministic=False, key=None):
         logits, value = self.forward(obs)
         if deterministic:
             action = mx.argmax(logits, axis=-1)
             log_prob = mx.zeros(obs.shape[0])
         else:
-            action = mx.random.categorical(logits)
+            action = mx.random.categorical(logits, key=key) if key is not None else mx.random.categorical(logits)
             log_prob = -nn.losses.cross_entropy(logits, action, reduction="none")
         return action, value, log_prob
 
@@ -90,13 +90,14 @@ class ActorCriticContinuous(nn.Module):
         value = self.vf(obs).squeeze(-1)
         return mean, value
 
-    def get_action(self, obs, deterministic=False):
+    def get_action(self, obs, deterministic=False, key=None):
         mean, value = self.forward(obs)
         std = mx.exp(self.log_std)
         if deterministic:
             action = mean
         else:
-            action = mean + mx.random.normal(mean.shape) * std
+            noise = mx.random.normal(mean.shape, key=key) if key is not None else mx.random.normal(mean.shape)
+            action = mean + noise * std
         log_prob = _gauss_log_prob(action, mean, self.log_std)
         return action, value, log_prob
 
@@ -133,13 +134,14 @@ class SACActor(nn.Module):
         log_std = mx.clip(self.log_std_h(h), LOG_STD_MIN, LOG_STD_MAX)
         return mu, log_std
 
-    def sample(self, obs, deterministic=False):
+    def sample(self, obs, deterministic=False, key=None):
         mu, log_std = self(obs)
         std = mx.exp(log_std)
         if deterministic:
             z = mu
         else:
-            z = mu + std * mx.random.normal(mu.shape)
+            noise = mx.random.normal(mu.shape, key=key) if key is not None else mx.random.normal(mu.shape)
+            z = mu + std * noise
         action = mx.tanh(z)
         # Use numerically stable form for tanh squash log-prob to avoid singularity at action = ±1
         # Stable form: 2*(log(2) - z - softplus(-2z)) instead of log(1 - action^2)
