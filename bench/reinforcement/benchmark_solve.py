@@ -22,6 +22,19 @@ def get_memory_mb() -> float:
     return psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
 
 
+def get_memory_mb_median(samples: int = 5, delay: float = 0.1) -> float:
+    """Sample memory multiple times and return median for more stable measurement."""
+    memory_samples = []
+    for _ in range(samples):
+        memory_samples.append(get_memory_mb())
+        if delay > 0:
+            time.sleep(delay)
+    
+    # Calculate median
+    memory_samples.sort()
+    return memory_samples[len(memory_samples) // 2]
+
+
 def swap_used_mb() -> float:
     try:
         return psutil.swap_memory().used / (1024 * 1024)
@@ -202,7 +215,7 @@ def train_until_solved(
             next_check = model.num_timesteps + eval_every
 
     wall = time.time() - t0
-    mem = get_memory_mb()
+    mem = get_memory_mb_median(samples=3, delay=0.05)
     if solved_at is None:
         last_eval = eval_mean(model, env_id, n_eval_eps, max_ep_steps, seed=seed + 99)
         if last_eval >= threshold:

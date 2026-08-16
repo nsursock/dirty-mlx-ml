@@ -17,6 +17,20 @@ def get_memory_mb() -> float:
     return process.memory_info().rss / 1024 / 1024
 
 
+def get_memory_mb_median(samples: int = 5, delay: float = 0.1) -> float:
+    """Sample memory multiple times and return median for more stable measurement."""
+    import time
+    memory_samples = []
+    for _ in range(samples):
+        memory_samples.append(get_memory_mb())
+        if delay > 0:
+            time.sleep(delay)
+    
+    # Calculate median
+    memory_samples.sort()
+    return memory_samples[len(memory_samples) // 2]
+
+
 def swap_used_mb() -> float:
     try:
         return psutil.swap_memory().used / (1024 * 1024)
@@ -176,8 +190,8 @@ def benchmark_algorithm(
 
         train_fps_history.append(train_fps)
         
-        # Measure memory
-        memory_mb = get_memory_mb()
+        # Measure memory with multiple samples for stability
+        memory_mb = get_memory_mb_median(samples=3, delay=0.05)
         
         results['num_envs'].append(num_envs)
         results['env_fps'].append(env_fps)
