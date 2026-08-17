@@ -10,6 +10,7 @@ from ..logger import CSVLogger
 from ..nn import ActorCriticContinuous, ActorCriticDiscrete
 from ..spaces import Discrete
 from ..utils import explained_variance, to_float
+from ..vec_normalize import VecNormalize, normalize, welford_update
 
 
 class PPO:
@@ -163,6 +164,15 @@ class PPO:
         action_high = self.env.action_space.high if not discrete else None
         bootstrap_truncated = not discrete
 
+        vn = self.env if isinstance(self.env, VecNormalize) else None
+        vn_state = vn.norm_state if vn is not None else None
+        norm_obs = vn.norm_obs if vn is not None else False
+        norm_reward = vn.norm_reward if vn is not None else False
+        clip_obs = vn.clip_obs if vn is not None else None
+        clip_reward = vn.clip_reward if vn is not None else None
+        vn_gamma = vn.gamma if vn is not None else gamma
+        vn_eps = vn.epsilon if vn is not None else 1e-8
+
         def rollout(
             env_state, env_steps, env_prev_done, env_key, policy_key,
             last_obs, last_episode_starts,
@@ -182,6 +192,23 @@ class PPO:
                 env_state, env_steps, env_prev_done, env_key, new_obs, rewards, dones, truncated = env_step(
                     env_state, env_steps, env_prev_done, env_key, env_action
                 )
+
+                if vn_state is not None:
+                    if norm_obs:
+                        vn_state["obs_mean"], vn_state["obs_var"], vn_state["obs_count"] = welford_update(
+                            vn_state["obs_mean"], vn_state["obs_var"], vn_state["obs_count"], new_obs
+                        )
+                        new_obs = normalize(new_obs, vn_state["obs_mean"], vn_state["obs_var"], vn_eps, clip_obs)
+                    if norm_reward:
+                        rets = vn_state["returns"] * vn_gamma + rewards
+                        rets = mx.where(dones, 0.0, rets)
+                        vn_state["returns"] = rets
+                        vn_state["ret_mean"], vn_state["ret_var"], vn_state["ret_count"] = welford_update(
+                            vn_state["ret_mean"], vn_state["ret_var"], vn_state["ret_count"], rets
+                        )
+                        rewards = rewards / mx.sqrt(vn_state["ret_var"] + vn_eps)
+                        if clip_reward is not None:
+                            rewards = mx.clip(rewards, -clip_reward, clip_reward)
 
                 ep_rew = ep_rew + rewards
                 ep_len = ep_len + 1.0
@@ -215,7 +242,12 @@ class PPO:
                 buf_obs, buf_actions, buf_rewards, buf_episode_starts, buf_values, buf_log_probs,
             )
 
-        return mx.compile(rollout, inputs=[policy.state])
+        inputs = [policy.state]
+        outputs = [policy.state]
+        if vn_state is not None:
+            inputs.append(vn_state)
+            outputs.append(vn_state)
+        return mx.compile(rollout, inputs=inputs, outputs=outputs)
 
     def collect_rollouts(self):
         self.buffer.reset()
@@ -353,9 +385,12 @@ class PPO:
 
 
 
-    def learn(self, total_timesteps: int, log_interval: int = 1, progress_bar: bool = False, **kwargs):
+    def learn(self, total_timesteps: int, log_interval: int = 1, progress_bar: bool = False, callback=None, **kwargs):
         self.start_time = time.time()
         self._num_timesteps_at_start = self.num_timesteps
+        if callback is not None:
+            callback.init_callback(self)
+            callback.on_training_start()
         self._last_obs, _ = self.env.reset()
         self._last_episode_starts = mx.ones((self.n_envs,))
         iteration = 0
@@ -363,8 +398,12 @@ class PPO:
             self.collect_rollouts()
             iteration += 1
             self.train()
+            if callback is not None and not callback.on_step():
+                break
             if log_interval and iteration % log_interval == 0:
                 self.dump_logs(iteration)
+        if callback is not None:
+            callback.on_training_end()
         self.logger.close()
         return self
 
@@ -373,6 +412,8 @@ class PPO:
             observation = mx.array(observation, dtype=mx.float32)
         if observation.ndim == 1:
             observation = observation[None]
+        if isinstance(self.env, VecNormalize):
+            observation = self.env.normalize_obs(observation)
         action, _, _ = self.policy.get_action(observation, deterministic=deterministic)
         mx.eval(action)
         if self.discrete:

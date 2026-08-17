@@ -11,6 +11,7 @@ from ..buffers import ReplayBuffer
 from ..logger import CSVLogger
 from ..nn import SACActor, TwinQ
 from ..utils import polyak_update, to_float
+from ..vec_normalize import VecNormalize
 
 
 class LogAlpha(nn.Module):
@@ -43,6 +44,8 @@ class SAC:
         verbose: int = 0,
         log_dir: str | None = None,
         policy_kwargs: dict | None = None,
+        max_grad_norm: float | None = None,
+        max_ent_coef: float | None = None,
         **kwargs,
     ):
         self.env = env
@@ -59,6 +62,8 @@ class SAC:
         self.verbose = verbose
         self.num_timesteps = 0
         self._n_updates = 0
+        self.max_grad_norm = max_grad_norm
+        self.max_ent_coef = max_ent_coef
         pk = policy_kwargs or {}
         hidden = tuple(pk.get("net_arch", [256, 256]))
         if seed is not None:
@@ -154,6 +159,10 @@ class SAC:
         target_entropy = self.target_entropy
         auto_ent = alpha_mod is not None
         ent_coef_fixed = self.ent_coef_fixed
+        do_clip_grad = self.max_grad_norm is not None
+        grad_clip = 0.0 if self.max_grad_norm is None else float(self.max_grad_norm)
+        do_clip_ent = self.max_ent_coef is not None
+        ent_clip = 0.0 if self.max_ent_coef is None else float(self.max_ent_coef)
 
         def step(key, obs, next_obs, actions, rewards, terminated, tau_step):
             k1, k2, k3, key = mx.random.split(key, 4)
@@ -165,11 +174,16 @@ class SAC:
                     return (-mod.log_alpha * (log_prob_alpha + target_entropy)).mean()
 
                 e_loss, e_grads = nn.value_and_grad(alpha_mod, ent_loss_fn)(alpha_mod)
+                if do_clip_grad:
+                    e_grads, _ = optim.clip_grad_norm(e_grads, grad_clip)
                 ent_opt.update(alpha_mod, e_grads)
                 ent_coef = mx.exp(mx.stop_gradient(alpha_mod.log_alpha))
             else:
-                e_loss = mx.array(0.0, dtype=mx.float32)
+                e_loss = 0.0
                 ent_coef = mx.array(ent_coef_fixed, dtype=mx.float32)
+
+            if do_clip_ent:
+                ent_coef = mx.clip(ent_coef, 0.0, ent_clip)
 
             next_actions, next_log_prob = actor.sample(next_obs, key=k2)
             next_actions = mx.stop_gradient(next_actions)
@@ -189,6 +203,8 @@ class SAC:
                 return 0.5 * (l1 + l2), l1, l2, mx.mean(mx.minimum(q1, q2))
 
             (c_loss, l1, l2, q_mean), c_grads = nn.value_and_grad(critic, critic_loss_fn)(critic)
+            if do_clip_grad:
+                c_grads, _ = optim.clip_grad_norm(c_grads, grad_clip)
             critic_opt.update(critic, c_grads)
 
             def actor_loss_fn(model):
@@ -198,6 +214,8 @@ class SAC:
                 return loss, mx.mean(log_prob)
 
             (a_loss, log_pi_actor), a_grads = nn.value_and_grad(actor, actor_loss_fn)(actor)
+            if do_clip_grad:
+                a_grads, _ = optim.clip_grad_norm(a_grads, grad_clip)
             actor_opt.update(actor, a_grads)
 
             if auto_ent:
@@ -345,9 +363,12 @@ class SAC:
         self._roll_ep_count = self._roll_ep_count * 0.0
         self.logger.dump(step=self.num_timesteps)
 
-    def learn(self, total_timesteps: int, log_interval: int = 4, progress_bar: bool = False, **kwargs):
+    def learn(self, total_timesteps: int, log_interval: int = 4, progress_bar: bool = False, callback=None, **kwargs):
         self.start_time = time.time()
         self._num_timesteps_at_start = self.num_timesteps
+        if callback is not None:
+            callback.init_callback(self)
+            callback.on_training_start()
         self._last_obs, _ = self.env.reset()
         iteration = 0
         steps_per_cycle = self.train_freq
@@ -379,11 +400,15 @@ class SAC:
                 self.train(gs, self.batch_size)
 
             iteration += 1
+            if callback is not None and not callback.on_step():
+                break
             if log_interval and iteration % log_interval == 0:
                 self.dump_logs(iteration)
 
         if self.logger._vals:
             self.dump_logs(iteration)
+        if callback is not None:
+            callback.on_training_end()
         self.logger.close()
         return self
 
@@ -392,6 +417,8 @@ class SAC:
             observation = mx.array(observation, dtype=mx.float32)
         if observation.ndim == 1:
             observation = observation[None]
+        if isinstance(self.env, VecNormalize):
+            observation = self.env.normalize_obs(observation)
         a_tanh, _ = self.actor.sample(observation, deterministic=deterministic)
         action = self._scale_action(a_tanh)
         mx.eval(action)
