@@ -1,5 +1,7 @@
 # General
 
+Start every reply with "Yes master!"
+
 ## Writing Commit Messages
 
 Imperative Mood in Subject: Write the summary line in the imperative present tense (e.g., Add user authentication or Fix memory leak in buffer, rather than Added or Fixes). This aligns with standard Git generator convention (If applied, this commit will <subject>).
@@ -13,3 +15,4 @@ Reference Issue Tracking: Link relevant issue numbers or pull request references
 ## Libraries / Development
 
 Don't install SB3 or Gymnasium. Use only MLX.
+Every python process launch should use venv/bin/python
