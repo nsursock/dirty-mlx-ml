@@ -23,7 +23,8 @@ def test_normalize_rejects_unknown():
         normalize_rollout_log_mode("carry_forward")
 
 
-def test_completed_only_skip_rule():
-    assert should_skip_completed_only_dump(0.0, force=False) is True
+def test_completed_only_never_skips_rows():
+    # Rows always dump; mode only gates whether ep_* are populated.
+    assert should_skip_completed_only_dump(0.0, force=False) is False
     assert should_skip_completed_only_dump(0.0, force=True) is False
     assert should_skip_completed_only_dump(3.0, force=False) is False

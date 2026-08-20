@@ -12,7 +12,6 @@ from ..rollout_logging import (
     COMPLETED_ONLY,
     ONGOING,
     normalize_rollout_log_mode,
-    should_skip_completed_only_dump,
 )
 from ..spaces import Discrete
 from ..utils import explained_variance, to_float
@@ -381,12 +380,11 @@ class PPO:
 
     def dump_logs(self, iteration: int = 0, force: bool = False):
         """Write one progress CSV row (see SAC.dump_logs for mode semantics)."""
+        del force  # always dump; retained for call-site compatibility
         if self.start_time is None:
             self.start_time = time.time()
         mx.eval(self._roll_rew_sum, self._roll_len_sum, self._roll_ep_count)
         n_ep = to_float(self._roll_ep_count)
-        if self.rollout_log_mode == COMPLETED_ONLY and should_skip_completed_only_dump(n_ep, force):
-            return False
 
         elapsed = max(time.time() - self.start_time, 1e-9)
         fps = int((self.num_timesteps - self._num_timesteps_at_start) / elapsed)
@@ -402,21 +400,18 @@ class PPO:
         step_rew = (to_float(self._step_rew_sum) / step_n) if step_n > 0 else 0.0
 
         if n_ep > 0:
-            ep_rew = to_float(self._roll_rew_sum) / n_ep
-            ep_len = to_float(self._roll_len_sum) / n_ep
+            self.logger.record("rollout/ep_rew_mean", to_float(self._roll_rew_sum) / n_ep)
+            self.logger.record("rollout/ep_len_mean", to_float(self._roll_len_sum) / n_ep)
         elif self.rollout_log_mode == ONGOING:
-            ep_rew, ep_len = ongoing_rew, ongoing_len
-        else:
-            ep_rew, ep_len = float("nan"), float("nan")
+            self.logger.record("rollout/ep_rew_mean", ongoing_rew)
+            self.logger.record("rollout/ep_len_mean", ongoing_len)
+        # completed_only + no completions: omit ep_* → blank CSV cells
 
-        self.logger.record("rollout/ep_rew_mean", ep_rew)
-        self.logger.record("rollout/ep_len_mean", ep_len)
         if self.rollout_log_mode == ONGOING:
             self.logger.record("rollout/ongoing_ep_rew_mean", ongoing_rew)
             self.logger.record("rollout/ongoing_ep_len_mean", ongoing_len)
             self.logger.record("rollout/step_rew_mean", step_rew)
         self.logger.record("rollout/success_rate", 0.0)
-        # decay window (approx stats_window)
         self._roll_rew_sum = self._roll_rew_sum * 0.0
         self._roll_len_sum = self._roll_len_sum * 0.0
         self._roll_ep_count = self._roll_ep_count * 0.0
