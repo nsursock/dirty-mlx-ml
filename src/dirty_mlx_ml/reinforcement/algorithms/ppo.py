@@ -8,6 +8,12 @@ import mlx.optimizers as optim
 from ..buffers import RolloutBuffer
 from ..logger import CSVLogger
 from ..nn import ActorCriticContinuous, ActorCriticDiscrete
+from ..rollout_logging import (
+    COMPLETED_ONLY,
+    ONGOING,
+    normalize_rollout_log_mode,
+    should_skip_completed_only_dump,
+)
 from ..spaces import Discrete
 from ..utils import explained_variance, to_float
 from ..vec_normalize import VecNormalize, normalize, welford_update
@@ -36,6 +42,7 @@ class PPO:
         verbose: int = 0,
         log_dir: str | None = None,
         policy_kwargs: dict | None = None,
+        rollout_log_mode: str = COMPLETED_ONLY,
         **kwargs,
     ):
         self.env = env
@@ -58,6 +65,7 @@ class PPO:
         self.verbose = verbose
         self.num_timesteps = 0
         self._n_updates = 0
+        self.rollout_log_mode = normalize_rollout_log_mode(rollout_log_mode)
         pk = policy_kwargs or {}
         hidden = tuple(pk.get("net_arch", [64, 64]))
         if seed is not None:
@@ -84,6 +92,8 @@ class PPO:
         self._roll_rew_sum = mx.array(0.0)
         self._roll_len_sum = mx.array(0.0)
         self._roll_ep_count = mx.array(0.0)
+        self._step_rew_sum = mx.array(0.0)
+        self._step_count = mx.array(0.0)
         self._last_obs = None
         self._last_episode_starts = mx.ones((self.n_envs,))
         self.start_time = None
@@ -91,6 +101,11 @@ class PPO:
         self._compiled_mb_step = None
         self._compiled_rollout = None
         self._policy_key = mx.random.key(seed if seed is not None else 0)
+
+    def note_step_rewards(self, rewards):
+        """Accumulate per-step reward totals for ``ongoing`` rollout logging."""
+        self._step_rew_sum = self._step_rew_sum + mx.sum(rewards)
+        self._step_count = self._step_count + float(rewards.shape[0])
 
     def _build_compiled_mb_step(self):
         policy = self.policy
@@ -279,6 +294,9 @@ class PPO:
         self._last_episode_starts = last_episode_starts
         self._ep_rew, self._ep_len = ep_rew, ep_len
         self._roll_rew_sum, self._roll_len_sum, self._roll_ep_count = roll_rew_sum, roll_len_sum, roll_ep_count
+        # Ongoing / step logging accumulators (outside the compiled rollout graph).
+        self._step_rew_sum = self._step_rew_sum + mx.sum(self.buffer.rewards)
+        self._step_count = self._step_count + float(self.n_steps * self.n_envs)
         self.buffer.obs = buf_obs
         self.buffer.actions = buf_actions
         self.buffer.rewards = buf_rewards
@@ -361,27 +379,51 @@ class PPO:
             self.logger.record("train/std", 0.0)
 
 
-    def dump_logs(self, iteration: int = 0):
+    def dump_logs(self, iteration: int = 0, force: bool = False):
+        """Write one progress CSV row (see SAC.dump_logs for mode semantics)."""
+        if self.start_time is None:
+            self.start_time = time.time()
+        mx.eval(self._roll_rew_sum, self._roll_len_sum, self._roll_ep_count)
+        n_ep = to_float(self._roll_ep_count)
+        if self.rollout_log_mode == COMPLETED_ONLY and should_skip_completed_only_dump(n_ep, force):
+            return False
+
         elapsed = max(time.time() - self.start_time, 1e-9)
         fps = int((self.num_timesteps - self._num_timesteps_at_start) / elapsed)
         self.logger.record("time/fps", fps)
         self.logger.record("time/iterations", iteration)
         self.logger.record("time/time_elapsed", elapsed)
         self.logger.record("time/total_timesteps", self.num_timesteps)
-        mx.eval(self._roll_rew_sum, self._roll_len_sum, self._roll_ep_count)
-        n_ep = to_float(self._roll_ep_count)
+
+        mx.eval(self._ep_rew, self._ep_len, self._step_rew_sum, self._step_count)
+        ongoing_rew = to_float(mx.mean(self._ep_rew))
+        ongoing_len = to_float(mx.mean(self._ep_len))
+        step_n = to_float(self._step_count)
+        step_rew = (to_float(self._step_rew_sum) / step_n) if step_n > 0 else 0.0
+
         if n_ep > 0:
-            self.logger.record("rollout/ep_rew_mean", to_float(self._roll_rew_sum) / n_ep)
-            self.logger.record("rollout/ep_len_mean", to_float(self._roll_len_sum) / n_ep)
+            ep_rew = to_float(self._roll_rew_sum) / n_ep
+            ep_len = to_float(self._roll_len_sum) / n_ep
+        elif self.rollout_log_mode == ONGOING:
+            ep_rew, ep_len = ongoing_rew, ongoing_len
         else:
-            self.logger.record("rollout/ep_rew_mean", float("nan"))
-            self.logger.record("rollout/ep_len_mean", float("nan"))
+            ep_rew, ep_len = float("nan"), float("nan")
+
+        self.logger.record("rollout/ep_rew_mean", ep_rew)
+        self.logger.record("rollout/ep_len_mean", ep_len)
+        if self.rollout_log_mode == ONGOING:
+            self.logger.record("rollout/ongoing_ep_rew_mean", ongoing_rew)
+            self.logger.record("rollout/ongoing_ep_len_mean", ongoing_len)
+            self.logger.record("rollout/step_rew_mean", step_rew)
         self.logger.record("rollout/success_rate", 0.0)
         # decay window (approx stats_window)
         self._roll_rew_sum = self._roll_rew_sum * 0.0
         self._roll_len_sum = self._roll_len_sum * 0.0
         self._roll_ep_count = self._roll_ep_count * 0.0
+        self._step_rew_sum = self._step_rew_sum * 0.0
+        self._step_count = self._step_count * 0.0
         self.logger.dump(step=self.num_timesteps)
+        return True
 
 
 
@@ -402,6 +444,7 @@ class PPO:
                 break
             if log_interval and iteration % log_interval == 0:
                 self.dump_logs(iteration)
+        self.dump_logs(iteration, force=True)
         if callback is not None:
             callback.on_training_end()
         self.logger.close()

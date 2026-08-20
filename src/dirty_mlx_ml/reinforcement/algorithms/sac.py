@@ -10,6 +10,12 @@ from mlx.utils import tree_map
 from ..buffers import ReplayBuffer
 from ..logger import CSVLogger
 from ..nn import SACActor, TwinQ
+from ..rollout_logging import (
+    COMPLETED_ONLY,
+    ONGOING,
+    normalize_rollout_log_mode,
+    should_skip_completed_only_dump,
+)
 from ..utils import polyak_update, to_float
 from ..vec_normalize import VecNormalize
 
@@ -46,6 +52,7 @@ class SAC:
         policy_kwargs: dict | None = None,
         max_grad_norm: float | None = None,
         max_ent_coef: float | None = None,
+        rollout_log_mode: str = COMPLETED_ONLY,
         **kwargs,
     ):
         self.env = env
@@ -64,6 +71,7 @@ class SAC:
         self._n_updates = 0
         self.max_grad_norm = max_grad_norm
         self.max_ent_coef = max_ent_coef
+        self.rollout_log_mode = normalize_rollout_log_mode(rollout_log_mode)
         pk = policy_kwargs or {}
         hidden = tuple(pk.get("net_arch", [256, 256]))
         if seed is not None:
@@ -108,6 +116,8 @@ class SAC:
         self._roll_rew_sum = mx.array(0.0)
         self._roll_len_sum = mx.array(0.0)
         self._roll_ep_count = mx.array(0.0)
+        self._step_rew_sum = mx.array(0.0)
+        self._step_count = mx.array(0.0)
         self._last_obs = None
         self.start_time = None
         self._num_timesteps_at_start = 0
@@ -123,6 +133,8 @@ class SAC:
     def _update_ep_stats(self, rewards, dones):
         self._ep_rew = self._ep_rew + rewards
         self._ep_len = self._ep_len + 1.0
+        self._step_rew_sum = self._step_rew_sum + mx.sum(rewards)
+        self._step_count = self._step_count + float(rewards.shape[0])
 
         if isinstance(dones, tuple) and len(dones) == 2:
             terminated, truncated = dones
@@ -341,7 +353,21 @@ class SAC:
             self._train_sums[k] = mx.array(0.0)
         self._train_count = 0
 
-    def dump_logs(self, iteration: int = 0):
+    def dump_logs(self, iteration: int = 0, force: bool = False):
+        """Write one progress CSV row.
+
+        ``completed_only`` (default): skip the row when no episode finished
+        since the last dump, unless ``force=True`` (used at training end).
+        ``ongoing``: always write; classic ``ep_*`` columns stay finite via
+        in-progress episode accumulators when nothing has completed yet.
+        """
+        if self.start_time is None:
+            self.start_time = time.time()
+        mx.eval(self._roll_rew_sum, self._roll_len_sum, self._roll_ep_count)
+        n_ep = to_float(self._roll_ep_count)
+        if self.rollout_log_mode == COMPLETED_ONLY and should_skip_completed_only_dump(n_ep, force):
+            return False
+
         elapsed = max(time.time() - self.start_time, 1e-9)
         fps = int((self.num_timesteps - self._num_timesteps_at_start) / elapsed)
         self._flush_train_metrics()
@@ -349,19 +375,36 @@ class SAC:
         self.logger.record("time/iterations", iteration)
         self.logger.record("time/time_elapsed", elapsed)
         self.logger.record("time/total_timesteps", self.num_timesteps)
-        mx.eval(self._roll_rew_sum, self._roll_len_sum, self._roll_ep_count)
-        n_ep = to_float(self._roll_ep_count)
+
+        mx.eval(self._ep_rew, self._ep_len, self._step_rew_sum, self._step_count)
+        ongoing_rew = to_float(mx.mean(self._ep_rew))
+        ongoing_len = to_float(mx.mean(self._ep_len))
+        step_n = to_float(self._step_count)
+        step_rew = (to_float(self._step_rew_sum) / step_n) if step_n > 0 else 0.0
+
         if n_ep > 0:
-            self.logger.record("rollout/ep_rew_mean", to_float(self._roll_rew_sum) / n_ep)
-            self.logger.record("rollout/ep_len_mean", to_float(self._roll_len_sum) / n_ep)
+            ep_rew = to_float(self._roll_rew_sum) / n_ep
+            ep_len = to_float(self._roll_len_sum) / n_ep
+        elif self.rollout_log_mode == ONGOING:
+            ep_rew, ep_len = ongoing_rew, ongoing_len
         else:
-            self.logger.record("rollout/ep_rew_mean", float("nan"))
-            self.logger.record("rollout/ep_len_mean", float("nan"))
+            ep_rew, ep_len = float("nan"), float("nan")
+
+        self.logger.record("rollout/ep_rew_mean", ep_rew)
+        self.logger.record("rollout/ep_len_mean", ep_len)
+        if self.rollout_log_mode == ONGOING:
+            self.logger.record("rollout/ongoing_ep_rew_mean", ongoing_rew)
+            self.logger.record("rollout/ongoing_ep_len_mean", ongoing_len)
+            self.logger.record("rollout/step_rew_mean", step_rew)
         self.logger.record("rollout/success_rate", 0.0)
+
         self._roll_rew_sum = self._roll_rew_sum * 0.0
         self._roll_len_sum = self._roll_len_sum * 0.0
         self._roll_ep_count = self._roll_ep_count * 0.0
+        self._step_rew_sum = self._step_rew_sum * 0.0
+        self._step_count = self._step_count * 0.0
         self.logger.dump(step=self.num_timesteps)
+        return True
 
     def learn(self, total_timesteps: int, log_interval: int = 4, progress_bar: bool = False, callback=None, **kwargs):
         self.start_time = time.time()
@@ -405,8 +448,7 @@ class SAC:
             if log_interval and iteration % log_interval == 0:
                 self.dump_logs(iteration)
 
-        if self.logger._vals:
-            self.dump_logs(iteration)
+        self.dump_logs(iteration, force=True)
         if callback is not None:
             callback.on_training_end()
         self.logger.close()
